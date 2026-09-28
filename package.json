@@ -51,7 +51,7 @@
     "build:all": "rimraf dist && tsc && vite build && vite build --config vite.config.module.mjs",
     "test": "vitest",
     "test:browser": "vitest --config vitest.browser.config.mjs",
-    "prepublishOnly": "rimraf dist && tsc && vite build && vite build --config vite.config.module.mjs"
+    "prepare": "npm run build:all"
   },
   "devDependencies": {
     "@napi-rs/canvas": "^0.1.98",
