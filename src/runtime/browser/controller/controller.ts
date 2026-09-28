@@ -28,6 +28,7 @@ export default class Controller {
   // Renderer
   private renderers: ARIBB24Renderer[] = [];
   private privious_pts: number | null = null;
+  private lastPaintedCue: ReturnType<ARIBB24Feeder['content']> = null;
   private pendingSoundCuePts: number | null = null;
   private needsRepaint: Set<ARIBB24Renderer> = new Set();
   // Feeder
@@ -52,7 +53,7 @@ export default class Controller {
     if (this.container) {
       this.renderers.forEach((renderer) => renderer.onAttach(this.container!));
     }
-    this.feeder?.prepare(this.media.currentTime);
+    this.feeder?.prepare(this.media.currentTime, this.bufferedStart(this.media.currentTime));
     this.setupHandlers();
   }
 
@@ -102,7 +103,7 @@ export default class Controller {
     this.feeder.onAttach();
 
     if (this.media != null) {
-      this.feeder.prepare(this.media.currentTime);
+      this.feeder.prepare(this.media.currentTime, this.bufferedStart(this.media.currentTime));
     }
   }
 
@@ -162,6 +163,12 @@ export default class Controller {
 
   private onPresentationChanged() {
     if (!this.media?.paused || this.media.seeking) { return; }
+    const currentTime = this.media.currentTime;
+    const current = this.feeder?.content(currentTime, this.bufferedStart(currentTime)) ?? null;
+    // The decoder may notify us about an older cue or repeat a feeder scan.
+    // Repainting the same presentation appends its glyphs a second time.
+    if (current != null && currentTime < current.pts + current.duration &&
+        current === this.lastPaintedCue && this.privious_pts === current.pts) { return; }
     if (this.isShowing) {
       this.paint(true);
     } else {
@@ -275,6 +282,7 @@ export default class Controller {
         }
         this.privious_pts = shown ? current.pts
           : current != null ? current.pts + current.duration : null;
+        this.lastPaintedCue = shown ? current : null;
       }
 
       return;
@@ -285,12 +293,14 @@ export default class Controller {
       if (this.privious_pts == null) { return; }
       this.renderers.forEach((renderer) => renderer.clear());
       this.privious_pts = null;
+      this.lastPaintedCue = null;
       this.pendingSoundCuePts = null;
     } else if (currentTime >= current.pts + current.duration) { // cue duration expired, clear
       const end = current.pts + current.duration;
       if (this.privious_pts === end) { return; }
       this.renderers.forEach((renderer) => renderer.clear());
       this.privious_pts = end; // end is finite
+      this.lastPaintedCue = null;
       this.pendingSoundCuePts = null;
     } else { // render
       if (this.privious_pts === current.pts) {
@@ -302,6 +312,7 @@ export default class Controller {
       }
       this.renderers.forEach((renderer) => renderer.render(structuredClone(current.state), structuredClone(current.data), structuredClone(current.info)));
       this.privious_pts = current.pts
+      this.lastPaintedCue = current;
       this.pendingSoundCuePts = null;
       this.emitBuiltinSounds(current);
     }
@@ -318,6 +329,7 @@ export default class Controller {
     this.renderers.forEach((renderer) => renderer.clear());
     // clear privious information
     this.privious_pts = null;
+    this.lastPaintedCue = null;
     this.pendingSoundCuePts = null;
   }
 
@@ -325,9 +337,15 @@ export default class Controller {
     this.isShowing = true;
     this.renderers.forEach((renderer) => renderer.show());
     if (this.needsRepaint.size > 0) {
-      // A hidden seek invalidates every renderer. Treat that as a complete
-      // repaint so the next animation frame does not append the cue again.
-      if (this.needsRepaint.size === this.renderers.length) {
+      // A seek invalidates every renderer. A cue can also change while hidden
+      // without a feeder notification, so a resize-only subset is insufficient
+      // when the current presentation differs from the last painted one.
+      const time = this.media?.currentTime;
+      const current = time != null && !this.media?.seeking
+        ? this.feeder?.content(time, this.bufferedStart(time)) ?? null : null;
+      const marker = current == null || time == null ? null
+        : time < current.pts + current.duration ? current.pts : current.pts + current.duration;
+      if (this.needsRepaint.size === this.renderers.length || marker !== this.privious_pts) {
         this.paint(true);
       } else {
         this.paint(true, [...this.needsRepaint]);

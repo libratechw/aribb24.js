@@ -9,6 +9,24 @@ import { ARIBB24BuiltinSoundReplayToken } from '@/lib/tokenizer/token';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Controller visibility and rendering loop', () => {
+  test('passes an unbuffered attach position to a feeder awaiting seek replay', () => {
+    const feeder = {
+      prepare: vi.fn(), content: vi.fn(() => null),
+      clear: vi.fn(), destroy: vi.fn(), onAttach: vi.fn(), onDetach: vi.fn(),
+      onSeeking: vi.fn(),
+    } as unknown as Feeder;
+    const media = Object.assign(new EventTarget(), {
+      currentTime: 1000, parentElement: null,
+      buffered: { length: 0 } as TimeRanges,
+    }) as HTMLVideoElement;
+    const controller = new Controller();
+    controller.attachFeeder(feeder);
+    controller.attachMedia(media);
+    expect(feeder.prepare).toHaveBeenLastCalledWith(1000, null);
+    controller.detachMedia();
+    controller.detachFeeder();
+  });
+
   test('does not render a hidden paused seek twice when shown again', () => {
     const pending = new Map<number, FrameRequestCallback>();
     let nextId = 1;
@@ -87,11 +105,11 @@ describe('Controller visibility and rendering loop', () => {
       onVideoResize: vi.fn(() => false), onPlay: vi.fn(), onPause: vi.fn(), onSeeking: vi.fn(),
     } satisfies Renderer;
     let cueAvailable = true;
+    let cue = {pts: 5, duration: 10, state: {}, data: [ARIBB24BuiltinSoundReplayToken.from(1)], info: {}};
     const sound = vi.fn();
     let presentationChangeHandler: (() => void) | null = null;
     const feeder = {
-      prepare: vi.fn(), content: vi.fn((time: number) => time >= 5 && cueAvailable ?
-        {pts: 5, duration: 10, state: {}, data: [ARIBB24BuiltinSoundReplayToken.from(1)], info: {}} : null),
+      prepare: vi.fn(), content: vi.fn((time: number) => time >= 5 && cueAvailable ? cue : null),
       clear: vi.fn(), destroy: vi.fn(), onAttach: vi.fn(), onDetach: vi.fn(),
       onSeeking: vi.fn(), onSeeked: vi.fn(),
       setPresentationChangeHandler: vi.fn((handler: (() => void) | null) => {
@@ -136,6 +154,20 @@ describe('Controller visibility and rendering loop', () => {
     cueAvailable = true;
     presentationChangeHandler?.();
     expect(render).toHaveBeenCalledTimes(2);
+    // Repeated feeder notifications for the same visible cue must not append
+    // its semi-transparent glyphs and background a second time.
+    presentationChangeHandler?.();
+    expect(render).toHaveBeenCalledTimes(2);
+    // Replacing the presentation at the same PTS is a real update, not a
+    // duplicate notification.
+    cue = {...cue, data: [ARIBB24BuiltinSoundReplayToken.from(2)]};
+    presentationChangeHandler?.();
+    expect(render).toHaveBeenCalledTimes(3);
+    controller.hide();
+    presentationChangeHandler?.();
+    controller.show();
+    expect(render).toHaveBeenCalledTimes(3);
+    controller.hide();
     expect(pending.size).toBe(0);
     controller.detachMedia();
   });
@@ -253,8 +285,9 @@ describe('Controller visibility and rendering loop', () => {
       onContainerResize: vi.fn(() => false),
       onVideoResize: vi.fn(() => false),
     } satisfies Renderer;
+    let cuePts = 1;
     const feeder = {
-      prepare: vi.fn(), content: vi.fn(() => ({pts: 1, duration: 10, state: {}, data: [ARIBB24BuiltinSoundReplayToken.from(1)], info: {}})),
+      prepare: vi.fn(), content: vi.fn(() => ({pts: cuePts, duration: 10, state: {}, data: [ARIBB24BuiltinSoundReplayToken.from(1)], info: {}})),
       clear: vi.fn(), destroy: vi.fn(), onAttach: vi.fn(), onDetach: vi.fn(), onSeeking: vi.fn(),
     } as unknown as Feeder;
 
@@ -302,7 +335,17 @@ describe('Controller visibility and rendering loop', () => {
     expect(render).toHaveBeenCalledTimes(2);
     expect(textRender).toHaveBeenCalledTimes(1);
     expect(sound).toHaveBeenCalledTimes(1);
+
+    // A cue change while hidden requires both renderers to receive the new
+    // cue, even if only one renderer reported a resize.
     controller.hide();
+    cuePts = 2;
+    mediaElement.currentTime = 2;
+    resize(800, 450);
+    controller.show();
+    tick();
+    expect(render).toHaveBeenCalledTimes(3);
+    expect(textRender).toHaveBeenCalledTimes(2);
     controller.detachMedia();
   });
 });
