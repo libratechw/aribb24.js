@@ -19,7 +19,12 @@ export default class CanvasWebWorkerRenderer extends CanvasRenderer {
     this.present = this.canvas.transferControlToOffscreen();
     this.buffer = new OffscreenCanvas(0, 0);
     this.worker = new RenderingWorker();
-    this.worker.postMessage(FromMainToWorkerEventInitialize.from(this.present, this.buffer), [this.present, this.buffer]);
+    try {
+      this.worker.postMessage(FromMainToWorkerEventInitialize.from(this.present, this.buffer), [this.present, this.buffer]);
+    } catch (error) {
+      this.worker.terminate();
+      throw error;
+    }
   }
 
   public resize(width: number, height: number): void {
