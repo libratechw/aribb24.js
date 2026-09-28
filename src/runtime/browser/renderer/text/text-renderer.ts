@@ -15,6 +15,10 @@ export default class TextRenderer implements Renderer {
     this.option = TextRendererOption.from(option);
   }
 
+  public getText(): string | null {
+    return this.text;
+  }
+
   public resize(width: number, height: number): void {}
   public destroy(): void {
     this.text = null;
@@ -28,6 +32,9 @@ export default class TextRenderer implements Renderer {
   public render(initialState: ARIBB24ParserState, tokens: ARIBB24BrowserToken[], info: CaptionAssociationInformation): void {
     // if SBTVD, it is overwritten screen and insert space to erase, so CS Insert
     if (shouldNotAssumeUseClearScreen(info)) {
+      this.text = '';
+    } else if (this.text == null && tokens.some((token) => token.tag === 'Character' || token.tag === 'DRCS')) {
+      // A fresh renderer may start from a statement without an explicit ClearScreen.
       this.text = '';
     }
 
