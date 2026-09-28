@@ -13,6 +13,7 @@ export default class HLSFeeder extends DecodingFeeder {
   private readonly onRemoveTrackHandler: ((event: TrackEvent) => void) = this.onRemoveTrack.bind(this);
   private readonly onPlayHandler = this.onPlay.bind(this);
   private readonly onPauseHandler = this.onPause.bind(this);
+  private readonly onBufferProgressHandler = this.onBufferProgress.bind(this);
   private readonly introspectHandler = this.introspect.bind(this);
 
   public constructor(option?: PartialFeederOption) {
@@ -59,6 +60,9 @@ export default class HLSFeeder extends DecodingFeeder {
     this.media.textTracks.addEventListener('removetrack', this.onRemoveTrackHandler);
     this.media.addEventListener('play', this.onPlayHandler);
     this.media.addEventListener('pause', this.onPauseHandler);
+    this.media.addEventListener('progress', this.onBufferProgressHandler);
+    this.media.addEventListener('loadeddata', this.onBufferProgressHandler);
+    this.media.addEventListener('canplay', this.onBufferProgressHandler);
   }
 
   private cleanupHandlers(): void {
@@ -68,6 +72,9 @@ export default class HLSFeeder extends DecodingFeeder {
     this.media.textTracks.removeEventListener('removetrack', this.onRemoveTrackHandler);
     this.media.removeEventListener('play', this.onPlayHandler);
     this.media.removeEventListener('pause', this.onPauseHandler);
+    this.media.removeEventListener('progress', this.onBufferProgressHandler);
+    this.media.removeEventListener('loadeddata', this.onBufferProgressHandler);
+    this.media.removeEventListener('canplay', this.onBufferProgressHandler);
   }
 
   public destroy(): void {
@@ -196,7 +203,8 @@ export default class HLSFeeder extends DecodingFeeder {
     if (replay) {
       // Scan first so prepare() anchors to the management cue in the new
       // buffered range, not one retained from before the seek.
-      this.prepare(current_time);
+      this.prepare(current_time, buffered_start);
+      if (this.media.paused) { this.notifyPresentationChange(); }
     }
   }
 
@@ -217,6 +225,12 @@ export default class HLSFeeder extends DecodingFeeder {
 
   private onPause(): void {
     this.unregisterRenderingLoop();
+  }
+
+  private onBufferProgress(): void {
+    // No animation loop runs while paused. A seek can finish before its new
+    // range and ID3 cues arrive, so scan once when media is loaded later.
+    if (this.media?.paused) { this.scanCurrentBuffer(); }
   }
 
   public onSeeking(): void {

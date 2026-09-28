@@ -26,6 +26,7 @@ describe('Controller visibility and rendering loop', () => {
 
     const mediaElement = Object.assign(new EventTarget(), {
       currentTime: 0, paused: true, parentElement: {} as HTMLElement,
+      buffered: { length: 1, start: () => 0, end: () => 20 } as TimeRanges,
     });
     const media = mediaElement as unknown as HTMLVideoElement;
     const render = vi.fn();
@@ -35,10 +36,11 @@ describe('Controller visibility and rendering loop', () => {
       onVideoResize: vi.fn(() => false), onPlay: vi.fn(), onPause: vi.fn(), onSeeking: vi.fn(),
     } satisfies Renderer;
     let cueAvailable = true;
+    const sound = vi.fn();
     let presentationChangeHandler: (() => void) | null = null;
     const feeder = {
       prepare: vi.fn(), content: vi.fn((time: number) => time >= 5 && cueAvailable ?
-        {pts: 5, duration: 10, state: {}, data: [], info: {}} : null),
+        {pts: 5, duration: 10, state: {}, data: [ARIBB24BuiltinSoundReplayToken.from(1)], info: {}} : null),
       clear: vi.fn(), destroy: vi.fn(), onAttach: vi.fn(), onDetach: vi.fn(),
       onSeeking: vi.fn(), onSeeked: vi.fn(),
       setPresentationChangeHandler: vi.fn((handler: (() => void) | null) => {
@@ -46,6 +48,7 @@ describe('Controller visibility and rendering loop', () => {
       }),
     } as unknown as Feeder;
     const controller = new Controller();
+    controller.on(EventType.BuiltinSound, sound);
     controller.attachRenderer(renderer);
     controller.attachFeeder(feeder);
     controller.attachMedia(media);
@@ -62,6 +65,16 @@ describe('Controller visibility and rendering loop', () => {
     expect(feeder.onSeeked).toHaveBeenCalledOnce();
     expect(render).toHaveBeenCalledOnce();
     expect(pending.size).toBe(0);
+
+    mediaElement.paused = false;
+    media.dispatchEvent(new Event('play'));
+    const [id, callback] = pending.entries().next().value!;
+    pending.delete(id);
+    callback(0);
+    expect(render).toHaveBeenCalledOnce();
+    expect(sound).toHaveBeenCalledOnce();
+    mediaElement.paused = true;
+    media.dispatchEvent(new Event('pause'));
 
     // A metadata cue may finish decoding after seeked, while rAF remains stopped.
     cueAvailable = false;
@@ -98,6 +111,7 @@ describe('Controller visibility and rendering loop', () => {
     controller.attachFeeder(feeder);
     controller.attachMedia(Object.assign(new EventTarget(), {
       currentTime: 1, parentElement: null,
+      buffered: { length: 1, start: () => 0, end: () => 20 } as TimeRanges,
     }) as HTMLVideoElement);
     (controller as any).paint(true);
     expect(observed).toEqual([false, false]);
@@ -169,6 +183,7 @@ describe('Controller visibility and rendering loop', () => {
       videoWidth: 1920,
       videoHeight: 1080,
       parentElement: container,
+      buffered: { length: 1, start: () => 0, end: () => 20 } as TimeRanges,
     });
     const media = mediaElement as unknown as HTMLVideoElement;
     const render = vi.fn();

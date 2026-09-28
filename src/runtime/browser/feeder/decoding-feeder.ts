@@ -15,6 +15,10 @@ type DecodingOrderedKey = {
 
 type QueuedDecodingData = FeederDecodingData & { key: string };
 
+// Caption packets can precede the first buffered video frame of a seek by a
+// small amount. Keep that pre-roll without replaying a distant old range.
+const SEEK_BUFFER_PREROLL_SECONDS = 0.5;
+
 const calcDecodingOrder = ({ dts }: DecodingOrderedKey): number => {
   return dts;
 }
@@ -47,6 +51,7 @@ export default abstract class DecodingFeeder implements Feeder {
   private decoder: AVLTree<DecodingOrderedKey, QueuedDecodingData, number> = new AVLTree<DecodingOrderedKey, QueuedDecodingData, number>(compareKey, compareNumber, calcDecodingOrder);
   private managementTimes: AVLTree<number, number> = new AVLTree<number, number>(compareNumber, compareNumber, (time) => time);
   private replayAfterSeek = false;
+  private pendingReplayWindow = false;
   private decoderBuffer: QueuedDecodingData[] = [];
   private notified: Set<string> = new Set();
   private decodingPromise: Promise<void>;
@@ -62,7 +67,7 @@ export default abstract class DecodingFeeder implements Feeder {
     this.presentationChangeHandler = handler;
   }
 
-  private notifyPresentationChange(): void {
+  protected notifyPresentationChange(): void {
     if (this.presentationChangeHandler == null || this.presentationChangeQueued) { return; }
     this.presentationChangeQueued = true;
     // A renderer failure must surface without terminating the decoder pump.
@@ -221,23 +226,45 @@ export default abstract class DecodingFeeder implements Feeder {
     }
   }
 
-  public prepare(time: number): void {
+  public prepare(time: number, bufferedStart?: number | null): void {
+    if (this.pendingReplayWindow) { return; }
     // The seek reset discards decoded state, not the packets already received.
     // Replay from the latest management packet so statements within the
     // buffered media can be decoded with their language and DRCS state.
-    this.priviousTime = this.replayAfterSeek ? (this.managementTimes.floor(time) ?? time) : time;
+    if (this.replayAfterSeek && bufferedStart === null) {
+      // Wait until the seek target is buffered. Replaying an old range now
+      // would put its last caption over the new position.
+      this.priviousTime = null;
+      return;
+    }
+    if (this.replayAfterSeek && bufferedStart != null) {
+      const managementTime = this.managementTimes.floor(time);
+      const replayStart = managementTime === undefined ? bufferedStart
+        : Math.max(managementTime, bufferedStart - SEEK_BUFFER_PREROLL_SECONDS);
+      if (managementTime !== undefined && managementTime < replayStart) {
+        // Restore language/DRCS state, but not statements from a distant range.
+        const management = this.decoder.get({ dts: managementTime, lang: 0 });
+        if (management != null) { this.notify(management); }
+      }
+      this.priviousTime = replayStart;
+    } else {
+      this.priviousTime = this.replayAfterSeek ? (this.managementTimes.floor(time) ?? time) : time;
+    }
+    this.pendingReplayWindow = this.replayAfterSeek;
     this.replayAfterSeek = false;
   }
 
-  public content(time: number): FeederPresentationData | null {
+  public content(time: number, bufferedStart?: number | null): FeederPresentationData | null {
     if (this.replayAfterSeek) {
-      this.prepare(time);
+      this.prepare(time, bufferedStart);
+      if (this.replayAfterSeek) { return null; }
     }
     if (this.priviousTime != null) {
       for (const segment of this.decoder.range(this.priviousTime, time)) {
         this.notify(segment);
       }
     }
+    this.pendingReplayWindow = false;
     this.priviousTime = time;
     return this.present.floor(time) ?? null;
   }
@@ -246,11 +273,13 @@ export default abstract class DecodingFeeder implements Feeder {
     this.decoder.clear();
     this.managementTimes.clear();
     this.replayAfterSeek = false;
+    this.pendingReplayWindow = false;
     this.disappearance();
   }
 
   private disappearance(): void {
     this.generation++;
+    this.pendingReplayWindow = false;
     this.notified.clear();
     this.present.forEach(closeValueImageBitmap);
     this.present.clear();

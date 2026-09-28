@@ -28,6 +28,7 @@ export default class Controller {
   // Renderer
   private renderers: ARIBB24Renderer[] = [];
   private privious_pts: number | null = null;
+  private pendingSoundCuePts: number | null = null;
   private needsRepaint: Set<ARIBB24Renderer> = new Set();
   // Feeder
   private feeder: ARIBB24Feeder | null = null;
@@ -138,6 +139,17 @@ export default class Controller {
     this.clear();
   }
 
+  private bufferedStart(time: number): number | null {
+    if (this.media == null) { return null; }
+    const ranges = this.media.buffered;
+    for (let index = 0; index < ranges.length; index++) {
+      if (ranges.start(index) <= time && time <= ranges.end(index)) {
+        return ranges.start(index);
+      }
+    }
+    return null;
+  }
+
   private onSeeked() {
     if (!this.media?.paused) { return; }
     this.feeder?.onSeeked?.();
@@ -216,7 +228,7 @@ export default class Controller {
 
   private onPlay(): void {
     if (this.media != null) {
-      this.feeder?.prepare(this.media.currentTime);
+      this.feeder?.prepare(this.media.currentTime, this.bufferedStart(this.media.currentTime));
     }
 
     this.renderers.forEach((renderer) => {
@@ -238,9 +250,10 @@ export default class Controller {
   private paint(repaint: boolean, renderers: ARIBB24Renderer[] = this.renderers) {
     // precondition
     if (!this.media) { return; }
+    if (this.media.seeking) { return; }
 
     const currentTime = this.media.currentTime;
-    const current = this.feeder?.content(currentTime) ?? null;
+    const current = this.feeder?.content(currentTime, this.bufferedStart(currentTime)) ?? null;
     if (repaint) {
       // paint
       if (current == null || currentTime >= current.pts + current.duration) {
@@ -251,6 +264,19 @@ export default class Controller {
         renderers.forEach((renderer) => renderer.render(structuredClone(current.state), structuredClone(current.data), structuredClone(current.info)));
       }
 
+      if (renderers === this.renderers) {
+        // A complete paused repaint has already drawn this cue. Do not append
+        // it again on the first play frame; defer its sound until play instead.
+        const shown = current != null && currentTime < current.pts + current.duration;
+        if (shown && this.privious_pts !== current.pts) {
+          this.pendingSoundCuePts = current.pts;
+        } else if (!shown) {
+          this.pendingSoundCuePts = null;
+        }
+        this.privious_pts = shown ? current.pts
+          : current != null ? current.pts + current.duration : null;
+      }
+
       return;
     }
 
@@ -259,20 +285,31 @@ export default class Controller {
       if (this.privious_pts == null) { return; }
       this.renderers.forEach((renderer) => renderer.clear());
       this.privious_pts = null;
+      this.pendingSoundCuePts = null;
     } else if (currentTime >= current.pts + current.duration) { // cue duration expired, clear
       const end = current.pts + current.duration;
       if (this.privious_pts === end) { return; }
       this.renderers.forEach((renderer) => renderer.clear());
       this.privious_pts = end; // end is finite
+      this.pendingSoundCuePts = null;
     } else { // render
-      if (this.privious_pts === current.pts) { return; }
+      if (this.privious_pts === current.pts) {
+        if (!this.media.paused && this.pendingSoundCuePts === current.pts) {
+          this.emitBuiltinSounds(current);
+          this.pendingSoundCuePts = null;
+        }
+        return;
+      }
       this.renderers.forEach((renderer) => renderer.render(structuredClone(current.state), structuredClone(current.data), structuredClone(current.info)));
       this.privious_pts = current.pts
+      this.pendingSoundCuePts = null;
+      this.emitBuiltinSounds(current);
+    }
+  }
 
-      // Builtin Sound Callback
-      for (const token of current.data.filter((data) => data.tag === 'BuiltinSoundReplay')) {
-        this.emitter.emit(EventType.BuiltinSound, BuiltinSound.from(token.sound));
-      }
+  private emitBuiltinSounds(current: NonNullable<ReturnType<ARIBB24Feeder['content']>>): void {
+    for (const token of current.data.filter((data) => data.tag === 'BuiltinSoundReplay')) {
+      this.emitter.emit(EventType.BuiltinSound, BuiltinSound.from(token.sound));
     }
   }
 
@@ -281,6 +318,7 @@ export default class Controller {
     this.renderers.forEach((renderer) => renderer.clear());
     // clear privious information
     this.privious_pts = null;
+    this.pendingSoundCuePts = null;
   }
 
   public show(): void {

@@ -138,4 +138,51 @@ describe('DecodingFeeder late metadata', () => {
       feeder.destroy();
     }
   });
+
+  test('does not restore an old statement after seeking into a separate buffered range', async () => {
+    const managementWithLanguage = {
+      ...management,
+      languages: [{ lang: 0, displayMode: 0b0101, iso_639_language_code: 'jpn',
+        format: 7, rollup: RollupModeType.NOT_ROLLUP, TCS: 0b00 }],
+    } as const satisfies ARIBB24CaptionData;
+    const statement = {
+      tag: 'CaptionStatement', group: 0, lang: 0,
+      timeControlMode: TimeControlModeType.FREE, units: [],
+    } as const satisfies ARIBB24CaptionData;
+    const makePacket = (caption: ARIBB24CaptionData) => new Uint8Array([0x80, 0, 0, ...new Uint8Array(mux(caption))]);
+    const feeder = new MPEGTSFeeder();
+    try {
+      feeder.prepare(0);
+      feeder.feedB24(makePacket(managementWithLanguage), 2);
+      feeder.feedB24(makePacket(statement), 2.5);
+      feeder.content(3);
+      await vi.waitFor(() => expect(feeder.content(3)?.pts).toBe(2.5));
+
+      feeder.onSeeking();
+      feeder.prepare(1000, null);
+      expect(feeder.content(1000, null)).toBeNull();
+      feeder.prepare(1000, 999);
+      feeder.content(1000, 999);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(feeder.content(1000, 999)?.data.map((token) => token.tag)).toEqual(['ClearScreen']);
+
+      feeder.feedB24(makePacket(statement), 998.9);
+      feeder.onSeeking();
+      feeder.prepare(1000, 999);
+      await vi.waitFor(() => expect(feeder.content(1000, 999)?.pts).toBe(998.9));
+
+      feeder.onSeeking();
+      feeder.prepare(3, 2);
+      feeder.prepare(3, 2); // A play event must not discard the pending replay window.
+      await vi.waitFor(() => expect(feeder.content(3, 2)?.pts).toBe(2.5));
+
+      feeder.onSeeking();
+      feeder.prepare(3, 2);
+      feeder.onSeeking(); // A second seek supersedes the unread first window.
+      feeder.prepare(1000, 999);
+      await vi.waitFor(() => expect(feeder.content(1000, 999)?.pts).toBe(998.9));
+    } finally {
+      feeder.destroy();
+    }
+  });
 });

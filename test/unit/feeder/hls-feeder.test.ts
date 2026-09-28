@@ -50,6 +50,52 @@ describe('HLSFeeder media lifetime', () => {
     }
   });
 
+  test('scans a paused seek target when its media arrives after seeked', () => {
+    const pending = new Map<number, FrameRequestCallback>();
+    let nextId = 1;
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      const id = nextId++;
+      pending.set(id, callback);
+      return id;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => pending.delete(id));
+    const track = {
+      kind: 'metadata', inBandMetadataTrackDispatchType: 'com.apple.streaming',
+      cues: [] as TextTrackCue[],
+    };
+    let ranges = [[0, 10]];
+    const media = Object.assign(new EventTarget(), {
+      currentTime: 1000, paused: true, seeking: false,
+      buffered: {
+        get length() { return ranges.length; },
+        start: (index: number) => ranges[index][0],
+        end: (index: number) => ranges[index][1],
+      } as TimeRanges,
+      textTracks: Object.assign(new EventTarget(), {0: track, length: 1}),
+    }) as unknown as HTMLVideoElement;
+    const feeder = new HLSFeeder();
+    const received: number[] = [];
+    (feeder as unknown as {feed(data: Uint8Array, pts: number, dts: number): void}).feed = (_data, pts) => {
+      received.push(pts);
+    };
+    try {
+      feeder.attachMedia(media);
+      feeder.onSeeking();
+      feeder.onSeeked();
+      expect(received).toEqual([]);
+      track.cues.push({
+        startTime: 999.5, track: track as unknown as TextTrack,
+        value: {key: 'PRIV', info: 'aribb24.js', data: new Uint8Array([0x80])},
+      } as unknown as TextTrackCue);
+      ranges = [[0, 10], [999, 1002]];
+      media.dispatchEvent(new Event('progress'));
+      expect(received).toEqual([999.5]);
+      expect(pending.size).toBe(0);
+    } finally {
+      feeder.destroy();
+    }
+  });
+
   test('keeps captions crossed during a short buffer gap, including a late cue', () => {
     const pending = new Map<number, FrameRequestCallback>();
     let nextId = 1;

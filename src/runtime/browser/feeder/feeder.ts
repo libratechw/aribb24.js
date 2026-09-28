@@ -94,8 +94,9 @@ export type FeederPresentationData = {
 };
 
 export default interface Feeder {
-  prepare(time: number): void;
-  content(time: number): FeederPresentationData | null;
+  /** Buffered range start for a seek target, or null while that target has no media. */
+  prepare(time: number, bufferedStart?: number | null): void;
+  content(time: number, bufferedStart?: number | null): FeederPresentationData | null;
   clear(): void;
   destroy(): void;
   onAttach(): void;
