@@ -108,6 +108,15 @@ describe("ARIB STD-B24 Parser", () => {
     ]);
   });
 
+  test('ReplaceDRCS accepts an uppercase hash key', () => {
+    const binary = Uint8Array.from([0x01, 0x23, 0x45, 0x67]).buffer;
+    const hash = md5(binary);
+    expect(replaceDRCS(
+      [ARIBB24DRCSToken.from(2, 2, 8, binary, '\u3099')],
+      new Map([[hash.toUpperCase(), '字']]),
+    )).toStrictEqual([ARIBB24CharacterToken.from('字\u3099')]);
+  });
+
   test('Parse SetWritingFormat (SWF) 5 (1920x1080)', () => {
     const option = { magnification: 2 } as const satisfies ARIBB24ParserOption;
     const parser = new ARIBB24Parser(initialState, option);
