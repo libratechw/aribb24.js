@@ -4,11 +4,46 @@ import Controller from '@/runtime/browser/controller/controller';
 import { EventType } from '@/runtime/browser/controller/events';
 import type Feeder from '@/runtime/browser/feeder/feeder';
 import type Renderer from '@/runtime/browser/renderer/renderer';
-import { ARIBB24BuiltinSoundReplayToken } from '@/lib/tokenizer/token';
+import { ARIBB24BuiltinSoundReplayToken, ARIBB24CharacterToken } from '@/lib/tokenizer/token';
+import aribInitialState from '@/lib/parser/state/ARIB';
+import TextRenderer from '@/runtime/browser/renderer/text/text-renderer';
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Controller visibility and rendering loop', () => {
+  test('replaces same-time text instead of appending to the retained image', () => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    const media = Object.assign(new EventTarget(), {
+      currentTime: 1, paused: true, seeking: false, parentElement: {} as HTMLElement,
+      buffered: { length: 1, start: () => 0, end: () => 2 } as TimeRanges,
+    }) as HTMLVideoElement;
+    let cue = { pts: 1, duration: 1, state: aribInitialState,
+      data: [ARIBB24CharacterToken.from('あ')], info: { association: 'ARIB' as const, language: 'jpn' } };
+    let changed: (() => void) | null = null;
+    const feeder = {
+      prepare() {}, content: () => cue, clear() {}, destroy() {}, onAttach() {}, onDetach() {},
+      onSeeking() {}, onSeeked() {},
+      setPresentationChangeHandler: (handler: (() => void) | null) => { changed = handler; },
+    } as unknown as Feeder;
+    const renderer = new TextRenderer();
+    const controller = new Controller();
+    controller.attachRenderer(renderer);
+    controller.attachFeeder(feeder);
+    controller.attachMedia(media);
+    media.dispatchEvent(new Event('seeked'));
+    expect(renderer.getText()).toBe('あ');
+    cue = { ...cue, data: [ARIBB24CharacterToken.from('い')] };
+    changed?.();
+    expect(renderer.getText()).toBe('い');
+    controller.detachMedia();
+    controller.detachFeeder();
+    feeder.destroy();
+  });
+
   test('passes an unbuffered attach position to a feeder awaiting seek replay', () => {
     const feeder = {
       prepare: vi.fn(), content: vi.fn(() => null),
