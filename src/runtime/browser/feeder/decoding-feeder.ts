@@ -53,6 +53,7 @@ export default abstract class DecodingFeeder implements Feeder {
   private replayAfterSeek = false;
   private pendingReplayWindow = false;
   private decoderBuffer: QueuedDecodingData[] = [];
+  private awaitingManagement: QueuedDecodingData[] = [];
   private notified: Set<string> = new Set();
   private decodingPromise: Promise<void>;
   private decodingNotify: (() => void) = Promise.resolve;
@@ -122,7 +123,8 @@ export default abstract class DecodingFeeder implements Feeder {
 
   private async pump() {
     while (!this.isDestroyed) {
-      for await (const { pts, caption } of this.generator(this.abortController.signal)) {
+      for await (const segment of this.generator(this.abortController.signal)) {
+        const { pts, caption } = segment;
         if (caption.tag === 'CaptionManagement') {
           if (this.priviousManagementData?.group === caption.group) { continue; }
 
@@ -146,11 +148,23 @@ export default abstract class DecodingFeeder implements Feeder {
             },
             data: [ARIBB24ClearScreenToken.from()]
           });
+          // HLS metadata with the same timestamp can arrive out of order.
+          // Retry a statement only after its management packet is installed.
+          for (const pending of this.awaitingManagement) {
+            if (pending.caption.tag === 'CaptionStatement' &&
+                pending.caption.group === caption.group && pending.pts >= pts) {
+              this.notify(pending);
+            }
+          }
+          this.awaitingManagement = [];
           continue;
         }
 
         // Caption
-        if (this.priviousManagementData == null) { continue; }
+        if (this.priviousManagementData == null || this.priviousManagementData.group !== caption.group) {
+          this.awaitingManagement.push(segment);
+          continue;
+        }
 
         const entry = this.priviousManagementData.languages.find((entry) => entry.lang === caption.lang);
         if (entry == null) { continue; }
@@ -281,6 +295,7 @@ export default abstract class DecodingFeeder implements Feeder {
     this.generation++;
     this.pendingReplayWindow = false;
     this.notified.clear();
+    this.awaitingManagement = [];
     this.present.forEach(closeValueImageBitmap);
     this.present.clear();
     this.priviousTime = null;
