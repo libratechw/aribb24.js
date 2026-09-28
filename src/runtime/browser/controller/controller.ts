@@ -221,7 +221,9 @@ export default class Controller {
       if (current == null || currentTime >= current.pts + current.duration) {
         renderers.forEach((renderer) => renderer.clear());
       } else {
-        renderers.forEach((renderer) => renderer.render(current.state, structuredClone(current.data), current.info));
+        // A renderer may consume and close bitmap tokens. Each renderer must
+        // own its copy, including during a resize repaint.
+        renderers.forEach((renderer) => renderer.render(structuredClone(current.state), structuredClone(current.data), structuredClone(current.info)));
       }
 
       return;

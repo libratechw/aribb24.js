@@ -9,6 +9,35 @@ import { ARIBB24BuiltinSoundReplayToken } from '@/lib/tokenizer/token';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Controller visibility and rendering loop', () => {
+  test('gives every renderer its own cue tokens during a resize repaint', () => {
+    const tokens = [{ tag: 'Bitmap', normal_bitmap: { closed: false } }];
+    const observed: boolean[] = [];
+    const renderer = (consume: boolean) => ({
+      render: (_state: unknown, data: typeof tokens) => {
+        observed.push(data[0].normal_bitmap.closed);
+        if (consume) data[0].normal_bitmap.closed = true;
+      },
+      clear() {}, hide() {}, show() {}, destroy() {}, onAttach() {}, onDetach() {},
+      onContainerResize: () => false, onVideoResize: () => false,
+      onPlay() {}, onPause() {}, onSeeking() {},
+    }) as unknown as Renderer;
+    const feeder = {
+      prepare() {}, content: () => ({ pts: 1, duration: 10, state: {}, data: tokens, info: {} }),
+      clear() {}, destroy() {}, onAttach() {}, onDetach() {}, onSeeking() {},
+    } as unknown as Feeder;
+    const controller = new Controller();
+    controller.attachRenderer(renderer(true));
+    controller.attachRenderer(renderer(false));
+    controller.attachFeeder(feeder);
+    controller.attachMedia(Object.assign(new EventTarget(), {
+      currentTime: 1, parentElement: null,
+    }) as HTMLVideoElement);
+    (controller as any).paint(true);
+    expect(observed).toEqual([false, false]);
+    expect(tokens[0].normal_bitmap.closed).toBe(false);
+    controller.detachMedia();
+  });
+
   test('starts the loop when captions are shown after playback began while hidden', () => {
     const pending = new Map<number, FrameRequestCallback>();
     let nextId = 1;
