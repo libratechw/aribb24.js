@@ -13,6 +13,8 @@ type DecodingOrderedKey = {
   lang?: number;
 };
 
+type QueuedDecodingData = FeederDecodingData & { key: string };
+
 const calcDecodingOrder = ({ dts }: DecodingOrderedKey): number => {
   return dts;
 }
@@ -42,13 +44,15 @@ export default abstract class DecodingFeeder implements Feeder {
   private priviousTime: number | null = null;
   private priviousManagementData: ARIBB24CaptionManagement | null = null;
   private desiredLang: number | null = null;
-  private decoder: AVLTree<DecodingOrderedKey, FeederDecodingData, number> = new AVLTree<DecodingOrderedKey, FeederDecodingData, number>(compareKey, compareNumber, calcDecodingOrder);
-  private decoderBuffer: FeederDecodingData[] = [];
+  private decoder: AVLTree<DecodingOrderedKey, QueuedDecodingData, number> = new AVLTree<DecodingOrderedKey, QueuedDecodingData, number>(compareKey, compareNumber, calcDecodingOrder);
+  private decoderBuffer: QueuedDecodingData[] = [];
+  private notified: Set<string> = new Set();
   private decodingPromise: Promise<void>;
   private decodingNotify: (() => void) = Promise.resolve;
   private abortController: AbortController = new AbortController();
   private present: AVLTree<number, FeederPresentationData> = new AVLTree<number, FeederPresentationData>(compareNumber, compareNumber, (pts) => pts);
   private isDestroyed: boolean = false;
+  private generation: number = 0;
 
   public constructor(option?: PartialFeederOption) {
     this.option = FeederOption.from(option);
@@ -58,10 +62,13 @@ export default abstract class DecodingFeeder implements Feeder {
     this.pump();
   }
 
-  private notify(segment: FeederDecodingData | null): void {
+  private notify(segment: QueuedDecodingData | null): void {
     if (segment != null) {
+      this.notified.add(segment.key);
       this.decoderBuffer.push(segment);
     } else {
+      // Clear the old generation before a post-seek cue can enter the buffer.
+      this.decoderBuffer = [];
       this.abortController.abort();
       this.abortController = new AbortController();
     }
@@ -71,19 +78,22 @@ export default abstract class DecodingFeeder implements Feeder {
 
   private async *generator(signal: AbortSignal) {
     while (true) {
-      await this.decodingPromise;
-      this.decodingPromise = new Promise<void>((resolve) => {
-        this.decodingNotify = resolve;
-      });
-      if (signal.aborted) {
-        this.decoderBuffer = [];
-        return;
+      // A new cue may arrive while the previous generator is being aborted.
+      if (this.decoderBuffer.length === 0) {
+        await this.decodingPromise;
+        this.decodingPromise = new Promise<void>((resolve) => {
+          this.decodingNotify = resolve;
+        });
       }
+      if (signal.aborted) { return; }
 
       const recieved = [... this.decoderBuffer];
       this.decoderBuffer = [];
 
-      yield* recieved;
+      for (const segment of recieved) {
+        if (signal.aborted) { return; }
+        yield segment;
+      }
     }
   }
 
@@ -103,7 +113,7 @@ export default abstract class DecodingFeeder implements Feeder {
           }
           this.priviousManagementData = caption;
 
-          this.present.insert(pts, {
+          this.insertPresentation(pts, {
             pts,
             duration: Number.POSITIVE_INFINITY,
             state: initialState,
@@ -127,7 +137,12 @@ export default abstract class DecodingFeeder implements Feeder {
         if (specification == null) { continue; }
 
         const [association, tokenizer, state] = specification;
+        const generation = this.generation;
         const tokenized = await toBrowserTokenWithBitmap(tokenizer.tokenize(caption), colortable);
+        if (generation !== this.generation || this.isDestroyed) {
+          closeValueImageBitmap({ pts, duration: 0, state, info: { association, language: entry.iso_639_language_code }, data: tokenized });
+          continue;
+        }
 
         let duration = Number.POSITIVE_INFINITY;
         let elapse = 0;
@@ -140,7 +155,7 @@ export default abstract class DecodingFeeder implements Feeder {
           }
         }
 
-        this.present.insert(pts, {
+        this.insertPresentation(pts, {
           pts,
           duration,
           state,
@@ -152,6 +167,12 @@ export default abstract class DecodingFeeder implements Feeder {
         });
       }
     }
+  }
+
+  private insertPresentation(pts: number, value: FeederPresentationData): void {
+    const previous = this.present.get(pts);
+    if (previous != null) { closeValueImageBitmap(previous); }
+    this.present.insert(pts, value);
   }
 
   protected feed(data: Uint8Array, pts: number, dts: number) {
@@ -166,7 +187,16 @@ export default abstract class DecodingFeeder implements Feeder {
 
     pts += this.option.offset.time;
     dts += this.option.offset.time;
-    this.decoder.insert({ dts, lang }, { pts, caption });
+    const keyString = `${dts}:${lang}`;
+    const segment = { pts, caption, key: keyString };
+    const key = { dts, lang };
+    this.decoder.insert(key, segment);
+    // A native HLS metadata cue can arrive after content() has advanced past
+    // its DTS. Keep it in the tree for later seeks, but decode it now as well.
+    // Equality is handled by the next range(), whose lower bound is inclusive.
+    if (!this.notified.has(keyString) && this.priviousTime !== null && dts < this.priviousTime) {
+      this.notify(segment);
+    }
   }
 
   public prepare(time: number): void {
@@ -189,6 +219,8 @@ export default abstract class DecodingFeeder implements Feeder {
   }
 
   private disappearance(): void {
+    this.generation++;
+    this.notified.clear();
     this.present.forEach(closeValueImageBitmap);
     this.present.clear();
     this.priviousTime = null;

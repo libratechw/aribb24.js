@@ -8,6 +8,7 @@ export default class HLSFeeder extends DecodingFeeder {
   private timer: number | null = null;
   private privious_time: number | null = null;
   private id3Tracks: TextTrack[] = [];
+  private cueSnapshots: Map<TextTrack, { length: number; first: TextTrackCue | null; last: TextTrackCue | null }> = new Map();
   private readonly onAddTrackHandler: ((event: TrackEvent) => void) = this.onAddTrack.bind(this);
   private readonly onRemoveTrackHandler: ((event: TrackEvent) => void) = this.onRemoveTrack.bind(this);
   private readonly onPlayHandler = this.onPlay.bind(this);
@@ -24,14 +25,17 @@ export default class HLSFeeder extends DecodingFeeder {
 
     this.setupHandlers();
     this.registerID3Track();
+    if (media.paused === false) { this.registerRenderingLoop(); }
   }
 
   public detachMedia(): void {
+    this.unregisterRenderingLoop();
     this.unregisterID3Track();
     this.cleanupHandlers();
 
     this.media = null
     this.privious_time = null;
+    this.cueSnapshots.clear();
   }
 
   private static isID3Track(track: TextTrack): boolean {
@@ -68,6 +72,7 @@ export default class HLSFeeder extends DecodingFeeder {
 
   public destroy(): void {
     this.detachMedia();
+    super.destroy();
   }
 
   private registerID3Track(): void {
@@ -81,6 +86,7 @@ export default class HLSFeeder extends DecodingFeeder {
 
   private unregisterID3Track(): void {
     this.id3Tracks = [];
+    this.cueSnapshots.clear();
   }
 
   private onAddTrack(event: TrackEvent): void {
@@ -88,6 +94,8 @@ export default class HLSFeeder extends DecodingFeeder {
     if (!HLSFeeder.isID3Track(track)) { return; }
 
     this.id3Tracks.push(track);
+    this.privious_time = null;
+    this.cueSnapshots.delete(track);
   }
 
   private onRemoveTrack(event: TrackEvent): void {
@@ -95,32 +103,62 @@ export default class HLSFeeder extends DecodingFeeder {
     if (!HLSFeeder.isID3Track(track)) { return; }
 
     this.id3Tracks = this.id3Tracks.filter((t) => t !== track);
+    this.cueSnapshots.delete(track);
+  }
+
+  private bufferedStart(time: number): number | null {
+    if (this.media == null || this.media.seeking) { return null; }
+    const ranges = this.media.buffered;
+    for (let index = 0; index < ranges.length; index++) {
+      if (ranges.start(index) <= time && time <= ranges.end(index)) {
+        return ranges.start(index);
+      }
+    }
+    return null;
   }
 
   private introspect(): void {
     this.registerRenderingLoop();
     if (this.media == null) { return; }
     const current_time = this.media.currentTime;
-
-    if (this.privious_time == null) {
-      this.privious_time = current_time;
+    const buffered_start = this.bufferedStart(current_time);
+    if (buffered_start == null) {
       return;
+    }
+    if (this.privious_time != null && current_time < this.privious_time) {
+      super.onSeeking();
+    }
+    const replay = this.privious_time == null || current_time < this.privious_time;
+    if (replay) {
+      // The controller's rAF may run after this one. Late cues must be
+      // decoded regardless of which observer sees the new media time first.
+      this.prepare(current_time);
     }
 
     for (const track of this.id3Tracks) {
       const cues = Array.from(track.cues ?? []);
       if (cues.length === 0) { continue; }
+      const previous = this.cueSnapshots.get(track);
+      const changed = previous == null || previous.length !== cues.length
+        || previous.first !== cues[0] || previous.last !== cues[cues.length - 1];
+      this.cueSnapshots.set(track, { length: cues.length, first: cues[0], last: cues[cues.length - 1] });
+      // On attach, seek, or cue-list updates, scan only the buffered range
+      // containing the current media time. Older ranges may belong to a
+      // different seek position and must not restore stale captions.
+      const scanBufferedRange = replay || changed;
+      const scan_start = replay ? buffered_start
+        : changed ? Math.min(buffered_start, this.privious_time!) : this.privious_time!;
 
       let prev_index: number | null = null;
       let curr_index: number | null = null;
 
       {
-        let begin = 0, end = cues.length;
+        let begin = -1, end = cues.length;
         while (begin + 1 < end) {
           const middle = Math.floor((begin + end) / 2);
           const start_time = cues[middle].startTime;
 
-          if (this.privious_time < start_time) {
+          if (scanBufferedRange ? scan_start <= start_time : scan_start < start_time) {
             end = middle;
           } else {
             begin = middle;
@@ -129,7 +167,7 @@ export default class HLSFeeder extends DecodingFeeder {
         prev_index = begin;
       }
       {
-        let begin = 0, end = cues.length;
+        let begin = -1, end = cues.length;
         while (begin + 1 < end) {
           const middle = Math.floor((begin + end) / 2);
           const start_time = cues[middle].startTime;
@@ -148,11 +186,8 @@ export default class HLSFeeder extends DecodingFeeder {
       }
 
       if (prev_index < curr_index) {
-        for (let index = curr_index; index > prev_index; index--) {
-          this.feedID3v2Cue(cues[index]);
-        }
-      } else {
-        for (let index = prev_index; index < curr_index; index++) {
+        // The decoder needs management data before subsequent statements.
+        for (let index = prev_index + 1; index <= curr_index; index++) {
           this.feedID3v2Cue(cues[index]);
         }
       }
@@ -178,6 +213,12 @@ export default class HLSFeeder extends DecodingFeeder {
 
   private onPause(): void {
     this.unregisterRenderingLoop();
+  }
+
+  public onSeeking(): void {
+    super.onSeeking();
+    this.privious_time = null;
+    this.cueSnapshots.clear();
   }
 
   private feedID3v2Cue(cue: TextTrackCue): void {
