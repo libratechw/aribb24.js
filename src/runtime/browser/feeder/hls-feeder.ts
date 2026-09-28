@@ -4,10 +4,13 @@ import { base64ToUint8Array } from '../../../util/binary';
 import DecodingFeeder from './decoding-feeder';
 
 export default class HLSFeeder extends DecodingFeeder {
+  // Shared by feeders from this module instance, not by separately loaded bundles.
+  private static readonly trackModeOwners = new WeakMap<TextTrack, { holders: number; previousMode: TextTrackMode }>();
   private media: HTMLMediaElement | null = null;
   private timer: number | null = null;
   private privious_time: number | null = null;
   private id3Tracks: TextTrack[] = [];
+  private ownedTrackModes: Set<TextTrack> = new Set();
   private cueSnapshots: Map<TextTrack, { length: number; first: TextTrackCue | null; last: TextTrackCue | null }> = new Map();
   private readonly onAddTrackHandler: ((event: TrackEvent) => void) = this.onAddTrack.bind(this);
   private readonly onRemoveTrackHandler: ((event: TrackEvent) => void) = this.onRemoveTrack.bind(this);
@@ -87,19 +90,51 @@ export default class HLSFeeder extends DecodingFeeder {
 
     for (const track of Array.from(this.media.textTracks)) {
       if (!HLSFeeder.isID3Track(track)) { continue; }
+      this.enableID3Track(track);
       this.id3Tracks.push(track);
     }
   }
 
   private unregisterID3Track(): void {
+    for (const track of this.ownedTrackModes) {
+      this.restoreID3TrackMode(track);
+    }
     this.id3Tracks = [];
     this.cueSnapshots.clear();
+  }
+
+  private enableID3Track(track: TextTrack): void {
+    // Safari does not expose in-band metadata cues while the track is disabled.
+    // Hidden keeps the cues available without painting them as browser subtitles.
+    if (track.inBandMetadataTrackDispatchType !== 'com.apple.streaming' || this.ownedTrackModes.has(track)) { return; }
+    const existingOwner = HLSFeeder.trackModeOwners.get(track);
+    if (existingOwner != null) {
+      existingOwner.holders++;
+      this.ownedTrackModes.add(track);
+      if (track.mode === 'disabled') { track.mode = 'hidden'; }
+      return;
+    }
+    if (track.mode !== 'disabled') { return; }
+    track.mode = 'hidden';
+    HLSFeeder.trackModeOwners.set(track, { holders: 1, previousMode: 'disabled' });
+    this.ownedTrackModes.add(track);
+  }
+
+  private restoreID3TrackMode(track: TextTrack): void {
+    if (!this.ownedTrackModes.delete(track)) { return; }
+    const owner = HLSFeeder.trackModeOwners.get(track)!;
+    owner.holders--;
+    if (owner.holders > 0) { return; }
+    HLSFeeder.trackModeOwners.delete(track);
+    // An external writer that also selects hidden cannot be distinguished here.
+    if (track.mode === 'hidden') { track.mode = owner.previousMode; }
   }
 
   private onAddTrack(event: TrackEvent): void {
     const track = event.track!;
     if (!HLSFeeder.isID3Track(track)) { return; }
 
+    this.enableID3Track(track);
     this.id3Tracks.push(track);
     this.privious_time = null;
     this.cueSnapshots.delete(track);
@@ -109,6 +144,7 @@ export default class HLSFeeder extends DecodingFeeder {
     const track = event.track!;
     if (!HLSFeeder.isID3Track(track)) { return; }
 
+    this.restoreID3TrackMode(track);
     this.id3Tracks = this.id3Tracks.filter((t) => t !== track);
     this.cueSnapshots.delete(track);
   }

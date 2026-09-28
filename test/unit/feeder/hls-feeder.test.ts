@@ -13,6 +13,175 @@ const buffered = (start: number, end: number): TimeRanges => ({
 }) as TimeRanges;
 
 describe('HLSFeeder media lifetime', () => {
+  test('enables native ID3 cues while attached and restores the prior track mode', () => {
+    const cue = { startTime: 1 } as TextTrackCue;
+    let mode: TextTrackMode = 'disabled';
+    const track = {
+      kind: 'metadata', inBandMetadataTrackDispatchType: 'com.apple.streaming',
+      get mode() { return mode; },
+      set mode(value: TextTrackMode) { mode = value; },
+      get cues() { return mode === 'disabled' ? null : [cue]; },
+    } as TextTrack;
+    const textTracks = Object.assign(new EventTarget(), { 0: track, length: 1 });
+    const media = Object.assign(new EventTarget(), {
+      currentTime: 0, paused: true, buffered: buffered(0, 2), textTracks,
+    }) as unknown as HTMLVideoElement;
+    const feeder = new HLSFeeder();
+
+    feeder.attachMedia(media);
+    expect(track.mode).toBe('hidden');
+    expect(track.cues?.length).toBe(1);
+    feeder.destroy();
+    expect(track.mode).toBe('disabled');
+
+    mode = 'hidden';
+    const alreadyEnabled = new HLSFeeder();
+    alreadyEnabled.attachMedia(media);
+    alreadyEnabled.destroy();
+    expect(track.mode).toBe('hidden');
+
+    mode = 'disabled';
+    const changedElsewhere = new HLSFeeder();
+    changedElsewhere.attachMedia(media);
+    mode = 'showing';
+    changedElsewhere.destroy();
+    expect(track.mode).toBe('showing');
+  });
+
+  test('enables a metadata track added after media attachment and restores it on removal', () => {
+    let mode: TextTrackMode = 'disabled';
+    const track = {
+      kind: 'metadata', inBandMetadataTrackDispatchType: 'com.apple.streaming',
+      get mode() { return mode; },
+      set mode(value: TextTrackMode) { mode = value; },
+      get cues() { return mode === 'disabled' ? null : []; },
+    } as TextTrack;
+    const textTracks = Object.assign(new EventTarget(), { length: 0 });
+    const media = Object.assign(new EventTarget(), {
+      currentTime: 0, paused: true, buffered: buffered(0, 2), textTracks,
+    }) as unknown as HTMLVideoElement;
+    const feeder = new HLSFeeder();
+
+    feeder.attachMedia(media);
+    textTracks.dispatchEvent(Object.assign(new Event('addtrack'), { track }));
+    expect(track.mode).toBe('hidden');
+    textTracks.dispatchEvent(Object.assign(new Event('removetrack'), { track }));
+    expect(track.mode).toBe('disabled');
+    feeder.destroy();
+  });
+
+  test('keeps a shared Safari track enabled until the last feeder detaches', () => {
+    const track = {
+      kind: 'metadata', inBandMetadataTrackDispatchType: 'com.apple.streaming',
+      mode: 'disabled', cues: [],
+    } as unknown as TextTrack;
+    const textTracks = Object.assign(new EventTarget(), { 0: track, length: 1 });
+    const media = Object.assign(new EventTarget(), {
+      currentTime: 0, paused: true, buffered: buffered(0, 2), textTracks,
+    }) as unknown as HTMLVideoElement;
+    const caption = new HLSFeeder();
+    const superimpose = new HLSFeeder();
+
+    caption.attachMedia(media);
+    superimpose.attachMedia(media);
+    expect(track.mode).toBe('hidden');
+    caption.destroy();
+    expect(track.mode).toBe('hidden');
+    superimpose.destroy();
+    expect(track.mode).toBe('disabled');
+  });
+
+  test('reenables a shared Safari track disabled between feeder attachments', () => {
+    const track = {
+      kind: 'metadata', inBandMetadataTrackDispatchType: 'com.apple.streaming',
+      mode: 'disabled', cues: [],
+    } as unknown as TextTrack;
+    const textTracks = Object.assign(new EventTarget(), { 0: track, length: 1 });
+    const media = Object.assign(new EventTarget(), {
+      currentTime: 0, paused: true, buffered: buffered(0, 2), textTracks,
+    }) as unknown as HTMLVideoElement;
+    const caption = new HLSFeeder();
+    const superimpose = new HLSFeeder();
+
+    caption.attachMedia(media);
+    track.mode = 'disabled';
+    superimpose.attachMedia(media);
+    expect(track.mode).toBe('hidden');
+    caption.destroy();
+    expect(track.mode).toBe('hidden');
+    superimpose.destroy();
+    expect(track.mode).toBe('disabled');
+  });
+
+  test('restores a Safari track added after attachment when the feeder detaches', () => {
+    const track = {
+      kind: 'metadata', inBandMetadataTrackDispatchType: 'com.apple.streaming',
+      mode: 'disabled', cues: [],
+    } as unknown as TextTrack;
+    const textTracks = Object.assign(new EventTarget(), { length: 0 });
+    const media = Object.assign(new EventTarget(), {
+      currentTime: 0, paused: true, buffered: buffered(0, 2), textTracks,
+    }) as unknown as HTMLVideoElement;
+    const feeder = new HLSFeeder();
+
+    feeder.attachMedia(media);
+    textTracks.dispatchEvent(Object.assign(new Event('addtrack'), { track }));
+    expect(track.mode).toBe('hidden');
+    feeder.destroy();
+    expect(track.mode).toBe('disabled');
+  });
+
+  test('does not change a disabled non-Safari ID3 track', () => {
+    const track = { kind: 'metadata', label: 'id3', mode: 'disabled', cues: [] } as unknown as TextTrack;
+    const textTracks = Object.assign(new EventTarget(), { 0: track, length: 1 });
+    const media = Object.assign(new EventTarget(), {
+      currentTime: 0, paused: true, buffered: buffered(0, 2), textTracks,
+    }) as unknown as HTMLVideoElement;
+    const feeder = new HLSFeeder();
+
+    feeder.attachMedia(media);
+    expect(track.mode).toBe('disabled');
+    feeder.destroy();
+    expect(track.mode).toBe('disabled');
+  });
+
+  test('feeds a native cue exposed only while the Safari track is hidden', () => {
+    const pending = new Map<number, FrameRequestCallback>();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      pending.set(1, callback);
+      return 1;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => pending.delete(id));
+    let mode: TextTrackMode = 'disabled';
+    const track = {
+      kind: 'metadata', inBandMetadataTrackDispatchType: 'com.apple.streaming',
+      get mode() { return mode; },
+      set mode(value: TextTrackMode) { mode = value; },
+      get cues() { return mode === 'disabled' ? null : [{
+        startTime: 1, track: track as unknown as TextTrack,
+        value: { key: 'PRIV', info: 'aribb24.js', data: new Uint8Array([0x80]) },
+      }]; },
+    } as TextTrack;
+    const textTracks = Object.assign(new EventTarget(), { 0: track, length: 1 });
+    const media = Object.assign(new EventTarget(), {
+      currentTime: 1.1, paused: false, seeking: false, buffered: buffered(0, 2), textTracks,
+    }) as unknown as HTMLVideoElement;
+    const feeder = new HLSFeeder();
+    const received: number[] = [];
+    (feeder as unknown as { feed(data: Uint8Array, pts: number, dts: number): void }).feed = (_data, pts) => {
+      received.push(pts);
+    };
+
+    try {
+      feeder.attachMedia(media);
+      pending.get(1)!(0);
+      expect(received).toEqual([1]);
+    } finally {
+      feeder.destroy();
+    }
+    expect(track.mode).toBe('disabled');
+  });
+
   test('scans buffered ID3 once after a paused seek without starting rAF', () => {
     const pending = new Map<number, FrameRequestCallback>();
     let nextId = 1;
@@ -294,7 +463,10 @@ describe('HLSFeeder media lifetime', () => {
     }
   });
 
-  test('replays available metadata in order on initial attach and after a backward seek', () => {
+  test.each([
+    { name: 'Safari native HLS', label: '', dispatchType: 'com.apple.streaming' },
+    { name: 'hls.js ID3', label: 'id3', dispatchType: undefined },
+  ])('replays $name metadata in order on attach and after a backward seek', ({ label, dispatchType }) => {
     const pending = new Map<number, FrameRequestCallback>();
     let nextId = 1;
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
@@ -304,7 +476,7 @@ describe('HLSFeeder media lifetime', () => {
     });
     vi.stubGlobal('cancelAnimationFrame', (id: number) => pending.delete(id));
     const track = {
-      kind: 'metadata', inBandMetadataTrackDispatchType: 'com.apple.streaming',
+      kind: 'metadata', label, inBandMetadataTrackDispatchType: dispatchType,
       cues: [] as TextTrackCue[],
     };
     track.cues.push(...[0, 1, 2, 3].map((startTime) => ({
