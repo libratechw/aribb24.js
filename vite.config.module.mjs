@@ -16,7 +16,7 @@ export default defineConfig({
         resolve(__dirname, 'src/runtime/common/additional-symbols-glyph.ts')
       ],
       name: 'aribb24js',
-      fileName: (format, name) => `${format === 'es' ? 'esm' : format}/${name}.${format === 'es' ? 'mjs' : 'js'}`,
+      fileName: '[format]/[name]',
       formats: ['es', 'cjs'],
     },
 
