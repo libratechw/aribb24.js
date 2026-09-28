@@ -325,7 +325,13 @@ export default class Controller {
     this.isShowing = true;
     this.renderers.forEach((renderer) => renderer.show());
     if (this.needsRepaint.size > 0) {
-      this.paint(true, [...this.needsRepaint]);
+      // A hidden seek invalidates every renderer. Treat that as a complete
+      // repaint so the next animation frame does not append the cue again.
+      if (this.needsRepaint.size === this.renderers.length) {
+        this.paint(true);
+      } else {
+        this.paint(true, [...this.needsRepaint]);
+      }
       this.needsRepaint.clear();
     }
     if (this.timer == null) {

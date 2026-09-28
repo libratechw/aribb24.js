@@ -9,6 +9,57 @@ import { ARIBB24BuiltinSoundReplayToken } from '@/lib/tokenizer/token';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Controller visibility and rendering loop', () => {
+  test('does not render a hidden paused seek twice when shown again', () => {
+    const pending = new Map<number, FrameRequestCallback>();
+    let nextId = 1;
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      const id = nextId++;
+      pending.set(id, callback);
+      return id;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => pending.delete(id));
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+
+    const mediaElement = Object.assign(new EventTarget(), {
+      currentTime: 0, paused: true, seeking: false, parentElement: {} as HTMLElement,
+      buffered: { length: 1, start: () => 0, end: () => 20 } as TimeRanges,
+    });
+    const render = vi.fn();
+    const renderer = {
+      render, clear: vi.fn(), hide: vi.fn(), show: vi.fn(), destroy: vi.fn(),
+      onAttach: vi.fn(), onDetach: vi.fn(), onContainerResize: vi.fn(() => false),
+      onVideoResize: vi.fn(() => false), onPlay: vi.fn(), onPause: vi.fn(), onSeeking: vi.fn(),
+    } satisfies Renderer;
+    const feeder = {
+      prepare: vi.fn(), content: vi.fn(() => ({ pts: 5, duration: 10, state: {}, data: [], info: {} })),
+      clear: vi.fn(), destroy: vi.fn(), onAttach: vi.fn(), onDetach: vi.fn(),
+      onSeeking: vi.fn(), onSeeked: vi.fn(),
+    } as unknown as Feeder;
+    const controller = new Controller();
+    controller.attachRenderer(renderer);
+    controller.attachFeeder(feeder);
+    controller.attachMedia(mediaElement as HTMLVideoElement);
+
+    controller.hide();
+    mediaElement.currentTime = 7;
+    mediaElement.dispatchEvent(new Event('seeking'));
+    mediaElement.dispatchEvent(new Event('seeked'));
+    expect(render).not.toHaveBeenCalled();
+
+    controller.show();
+    expect(render).toHaveBeenCalledTimes(1);
+    const [id, callback] = [...pending.entries()][0];
+    pending.delete(id);
+    callback(0);
+    expect(render).toHaveBeenCalledTimes(1);
+    controller.hide();
+    controller.detachMedia();
+  });
+
   test('repaints a paused seek without restarting the rendering loop', () => {
     const pending = new Map<number, FrameRequestCallback>();
     let nextId = 1;
