@@ -133,13 +133,17 @@ test('repaints a paused HLS seek when management starts just before the target b
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(render).not.toHaveBeenCalled();
 
+    ranges = [[0, 4], [999, 1002]];
+    media.dispatchEvent(new Event('progress'));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(render).not.toHaveBeenCalled();
+
     track.cues.push(...[[998.8, management], [999.5, statement]].map(([startTime, caption]) => ({
       startTime, track: track as unknown as TextTrack,
       value: {key: 'PRIV', info: 'aribb24.js', data: new Uint8Array([
         0x80, 0, 0, ...new Uint8Array(mux(caption as ARIBB24CaptionData)),
       ])},
     })) as unknown as TextTrackCue[]);
-    ranges = [[0, 4], [999, 1002]];
     media.dispatchEvent(new Event('progress'));
     await vi.waitFor(() => expect(feeder.content(1000, 999)?.pts).toBe(999.5));
     expect(render).toHaveBeenCalled();

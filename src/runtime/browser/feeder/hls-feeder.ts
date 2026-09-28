@@ -10,6 +10,7 @@ export default class HLSFeeder extends DecodingFeeder {
   private timer: number | null = null;
   private privious_time: number | null = null;
   private id3Tracks: TextTrack[] = [];
+  private fedCues: WeakSet<TextTrackCue> = new WeakSet();
   private ownedTrackModes: Set<TextTrack> = new Set();
   private cueSnapshots: Map<TextTrack, { length: number; first: TextTrackCue | null; last: TextTrackCue | null }> = new Map();
   private readonly onAddTrackHandler: ((event: TrackEvent) => void) = this.onAddTrack.bind(this);
@@ -39,6 +40,7 @@ export default class HLSFeeder extends DecodingFeeder {
 
     this.media = null
     this.privious_time = null;
+    this.fedCues = new WeakSet();
     this.cueSnapshots.clear();
   }
 
@@ -174,6 +176,7 @@ export default class HLSFeeder extends DecodingFeeder {
     }
     if (this.privious_time != null && current_time < this.privious_time) {
       super.onSeeking();
+      this.fedCues = new WeakSet();
     }
     const replay = this.privious_time == null || current_time < this.privious_time;
 
@@ -184,13 +187,13 @@ export default class HLSFeeder extends DecodingFeeder {
       const changed = previous == null || previous.length !== cues.length
         || previous.first !== cues[0] || previous.last !== cues[cues.length - 1];
       this.cueSnapshots.set(track, { length: cues.length, first: cues[0], last: cues[cues.length - 1] });
-      // On attach or seek, scan the current buffered range and its short
-      // decoding pre-roll. For later cue-list updates, start at the previous
-      // scan position so an old cue is not fed a second time.
+      // On attach, seek, or cue-list updates, include the current buffer's
+      // short decoding pre-roll. Track cue identity prevents re-feeding an
+      // earlier cue when the list grows during uninterrupted playback.
       const scanBufferedRange = replay || changed;
       const bufferScanStart = buffered_start - SEEK_BUFFER_PREROLL_SECONDS;
       const scan_start = replay ? bufferScanStart
-        : changed ? Math.min(buffered_start, this.privious_time!) : this.privious_time!;
+        : changed ? Math.min(bufferScanStart, this.privious_time!) : this.privious_time!;
 
       let prev_index: number | null = null;
       let curr_index: number | null = null;
@@ -231,7 +234,10 @@ export default class HLSFeeder extends DecodingFeeder {
       if (prev_index < curr_index) {
         // The decoder needs management data before subsequent statements.
         for (let index = prev_index + 1; index <= curr_index; index++) {
-          this.feedID3v2Cue(cues[index]);
+          const cue = cues[index];
+          if (this.fedCues.has(cue)) { continue; }
+          this.feedID3v2Cue(cue);
+          this.fedCues.add(cue);
         }
       }
     }
@@ -273,6 +279,7 @@ export default class HLSFeeder extends DecodingFeeder {
   public onSeeking(): void {
     super.onSeeking();
     this.privious_time = null;
+    this.fedCues = new WeakSet();
     this.cueSnapshots.clear();
   }
 
