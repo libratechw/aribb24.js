@@ -26,6 +26,7 @@ export default class Controller {
   // Renderer
   private renderers: ARIBB24Renderer[] = [];
   private privious_pts: number | null = null;
+  private needsRepaint: Set<ARIBB24Renderer> = new Set();
   // Feeder
   private feeder: ARIBB24Feeder | null = null;
   // Control
@@ -114,6 +115,7 @@ export default class Controller {
 
   public detachRenderer(renderer: ARIBB24Renderer) {
     renderer.onDetach();
+    this.needsRepaint.delete(renderer);
     this.renderers = this.renderers.filter((elem) => elem !== renderer);
   }
 
@@ -138,23 +140,38 @@ export default class Controller {
 
     const width = target.devicePixelContentBoxSize != null ? target.devicePixelContentBoxSize[0].inlineSize : Math.floor(target.contentBoxSize[0].inlineSize * devicePixelRatio);
     const height = target.devicePixelContentBoxSize != null ? target.devicePixelContentBoxSize[0].blockSize : Math.floor(target.contentBoxSize[0].blockSize * devicePixelRatio);
+    if (width <= 0 || height <= 0) { return; }
 
+    const resized: ARIBB24Renderer[] = [];
     this.renderers.forEach((renderer) => {
-      if (!renderer.onContainerResize(width, height)) { return; }
-      this.paint(true);
+      if (renderer.onContainerResize(width, height)) { resized.push(renderer); }
     });
+    if (resized.length === 0) { return; }
+    if (this.isShowing) {
+      this.paint(true, resized);
+    } else {
+      resized.forEach((renderer) => this.needsRepaint.add(renderer));
+    }
   }
 
   private onVideoResize() {
     if (!this.media || !this.container) { return; }
+    if (this.media.videoWidth <= 0 || this.media.videoHeight <= 0) { return; }
 
+    const resized: ARIBB24Renderer[] = [];
     this.renderers.forEach((renderer) => {
-      if (!renderer.onVideoResize(this.media!.videoWidth, this.media!.videoHeight)) { return; }
-      this.paint(true);
+      if (renderer.onVideoResize(this.media!.videoWidth, this.media!.videoHeight)) { resized.push(renderer); }
     });
+    if (resized.length === 0) { return; }
+    if (this.isShowing) {
+      this.paint(true, resized);
+    } else {
+      resized.forEach((renderer) => this.needsRepaint.add(renderer));
+    }
   }
 
   private onTimeupdate() {
+    this.timer = null;
     // not showing, do not show
     if (!this.isShowing) { return; }
 
@@ -181,7 +198,7 @@ export default class Controller {
       renderer.onPlay();
     });
 
-    if (this.timer != null) { return }
+    if (!this.isShowing || this.timer != null) { return }
     this.registerRenderingLoop();
   }
 
@@ -193,7 +210,7 @@ export default class Controller {
     this.unregisterRenderingLoop();
   }
 
-  private paint(repaint: boolean) {
+  private paint(repaint: boolean, renderers: ARIBB24Renderer[] = this.renderers) {
     // precondition
     if (!this.media) { return; }
 
@@ -202,9 +219,9 @@ export default class Controller {
     if (repaint) {
       // paint
       if (current == null || currentTime >= current.pts + current.duration) {
-        this.renderers.forEach((renderer) => renderer.clear());
+        renderers.forEach((renderer) => renderer.clear());
       } else {
-        this.renderers.forEach((renderer) => renderer.render(current.state, structuredClone(current.data), current.info));
+        renderers.forEach((renderer) => renderer.render(current.state, structuredClone(current.data), current.info));
       }
 
       return;
@@ -241,10 +258,14 @@ export default class Controller {
 
   public show(): void {
     this.isShowing = true;
+    this.renderers.forEach((renderer) => renderer.show());
+    if (this.needsRepaint.size > 0) {
+      this.paint(true, [...this.needsRepaint]);
+      this.needsRepaint.clear();
+    }
     if (this.timer == null) {
       this.registerRenderingLoop();
     }
-    this.renderers.forEach((renderer) => renderer.show());
   }
 
   public hide(): void {
