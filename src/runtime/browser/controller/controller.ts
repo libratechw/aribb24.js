@@ -20,6 +20,8 @@ export default class Controller {
   private timer: number | null = null;
   // Seeking Handler
   private readonly onSeekingHandler = this.onSeeking.bind(this);
+  private readonly onSeekedHandler = this.onSeeked.bind(this);
+  private readonly onPresentationChangedHandler = this.onPresentationChanged.bind(this);
   // Play/Pause Handler
   private readonly onPlayHandler = this.onPlay.bind(this);
   private readonly onPauseHandler = this.onPause.bind(this);
@@ -66,6 +68,7 @@ export default class Controller {
 
     // setup media handler
     this.media.addEventListener('seeking', this.onSeekingHandler);
+    this.media.addEventListener('seeked', this.onSeekedHandler);
     this.media.addEventListener('resize', this.onVideoResizeHandler);
     this.media.addEventListener('play', this.onPlayHandler);
     this.media.addEventListener('pause', this.onPauseHandler);
@@ -78,6 +81,7 @@ export default class Controller {
   private cleanupHandlers() {
     // cleanup media seeking handler
     this.media?.removeEventListener('seeking', this.onSeekingHandler);
+    this.media?.removeEventListener('seeked', this.onSeekedHandler);
     this.media?.removeEventListener('resize', this.onVideoResizeHandler);
     this.media?.removeEventListener('play', this.onPlayHandler);
     this.media?.removeEventListener('pause', this.onPauseHandler);
@@ -93,6 +97,7 @@ export default class Controller {
   public attachFeeder(feeder: ARIBB24Feeder) {
     this.detachFeeder();
     this.feeder = feeder;
+    this.feeder.setPresentationChangeHandler?.(this.onPresentationChangedHandler);
     this.feeder.onAttach();
 
     if (this.media != null) {
@@ -101,6 +106,7 @@ export default class Controller {
   }
 
   public detachFeeder() {
+    this.feeder?.setPresentationChangeHandler?.(null);
     this.feeder?.onDetach();
     this.feeder = null;
   }
@@ -130,6 +136,25 @@ export default class Controller {
     this.feeder?.onSeeking();
     this.renderers.forEach((renderer) => renderer.onSeeking());
     this.clear();
+  }
+
+  private onSeeked() {
+    if (!this.media?.paused) { return; }
+    this.feeder?.onSeeked?.();
+    if (this.isShowing) {
+      this.paint(true);
+    } else {
+      this.renderers.forEach((renderer) => this.needsRepaint.add(renderer));
+    }
+  }
+
+  private onPresentationChanged() {
+    if (!this.media?.paused || this.media.seeking) { return; }
+    if (this.isShowing) {
+      this.paint(true);
+    } else {
+      this.renderers.forEach((renderer) => this.needsRepaint.add(renderer));
+    }
   }
 
   private onContainerResize(entries: ResizeObserverEntry[]) {

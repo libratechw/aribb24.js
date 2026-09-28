@@ -9,6 +9,73 @@ import { ARIBB24BuiltinSoundReplayToken } from '@/lib/tokenizer/token';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Controller visibility and rendering loop', () => {
+  test('repaints a paused seek without restarting the rendering loop', () => {
+    const pending = new Map<number, FrameRequestCallback>();
+    let nextId = 1;
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      const id = nextId++;
+      pending.set(id, callback);
+      return id;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => pending.delete(id));
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+
+    const mediaElement = Object.assign(new EventTarget(), {
+      currentTime: 0, paused: true, parentElement: {} as HTMLElement,
+    });
+    const media = mediaElement as unknown as HTMLVideoElement;
+    const render = vi.fn();
+    const renderer = {
+      render, clear: vi.fn(), hide: vi.fn(), show: vi.fn(), destroy: vi.fn(),
+      onAttach: vi.fn(), onDetach: vi.fn(), onContainerResize: vi.fn(() => false),
+      onVideoResize: vi.fn(() => false), onPlay: vi.fn(), onPause: vi.fn(), onSeeking: vi.fn(),
+    } satisfies Renderer;
+    let cueAvailable = true;
+    let presentationChangeHandler: (() => void) | null = null;
+    const feeder = {
+      prepare: vi.fn(), content: vi.fn((time: number) => time >= 5 && cueAvailable ?
+        {pts: 5, duration: 10, state: {}, data: [], info: {}} : null),
+      clear: vi.fn(), destroy: vi.fn(), onAttach: vi.fn(), onDetach: vi.fn(),
+      onSeeking: vi.fn(), onSeeked: vi.fn(),
+      setPresentationChangeHandler: vi.fn((handler: (() => void) | null) => {
+        presentationChangeHandler = handler;
+      }),
+    } as unknown as Feeder;
+    const controller = new Controller();
+    controller.attachRenderer(renderer);
+    controller.attachFeeder(feeder);
+    controller.attachMedia(media);
+
+    mediaElement.paused = false;
+    media.dispatchEvent(new Event('play'));
+    expect(pending.size).toBe(1);
+    mediaElement.paused = true;
+    media.dispatchEvent(new Event('pause'));
+    expect(pending.size).toBe(0);
+    mediaElement.currentTime = 7;
+    media.dispatchEvent(new Event('seeking'));
+    media.dispatchEvent(new Event('seeked'));
+    expect(feeder.onSeeked).toHaveBeenCalledOnce();
+    expect(render).toHaveBeenCalledOnce();
+    expect(pending.size).toBe(0);
+
+    // A metadata cue may finish decoding after seeked, while rAF remains stopped.
+    cueAvailable = false;
+    mediaElement.currentTime = 12;
+    media.dispatchEvent(new Event('seeking'));
+    media.dispatchEvent(new Event('seeked'));
+    expect(render).toHaveBeenCalledOnce();
+    cueAvailable = true;
+    presentationChangeHandler?.();
+    expect(render).toHaveBeenCalledTimes(2);
+    expect(pending.size).toBe(0);
+    controller.detachMedia();
+  });
+
   test('gives every renderer its own cue tokens during a resize repaint', () => {
     const tokens = [{ tag: 'Bitmap', normal_bitmap: { closed: false } }];
     const observed: boolean[] = [];

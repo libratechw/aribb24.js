@@ -55,6 +55,22 @@ export default abstract class DecodingFeeder implements Feeder {
   private present: AVLTree<number, FeederPresentationData> = new AVLTree<number, FeederPresentationData>(compareNumber, compareNumber, (pts) => pts);
   private isDestroyed: boolean = false;
   private generation: number = 0;
+  private presentationChangeHandler: (() => void) | null = null;
+  private presentationChangeQueued = false;
+
+  public setPresentationChangeHandler(handler: (() => void) | null): void {
+    this.presentationChangeHandler = handler;
+  }
+
+  private notifyPresentationChange(): void {
+    if (this.presentationChangeHandler == null || this.presentationChangeQueued) { return; }
+    this.presentationChangeQueued = true;
+    // A renderer failure must surface without terminating the decoder pump.
+    queueMicrotask(() => {
+      this.presentationChangeQueued = false;
+      this.presentationChangeHandler?.();
+    });
+  }
 
   public constructor(option?: PartialFeederOption) {
     this.option = FeederOption.from(option);
@@ -175,6 +191,7 @@ export default abstract class DecodingFeeder implements Feeder {
     const previous = this.present.get(pts);
     if (previous != null) { closeValueImageBitmap(previous); }
     this.present.insert(pts, value);
+    this.notifyPresentationChange();
   }
 
   protected feed(data: Uint8Array, pts: number, dts: number) {
@@ -240,6 +257,7 @@ export default abstract class DecodingFeeder implements Feeder {
     this.priviousTime = null;
     this.priviousManagementData = null;
     this.notify(null);
+    this.notifyPresentationChange();
   }
 
   public onAttach(): void {
@@ -257,6 +275,7 @@ export default abstract class DecodingFeeder implements Feeder {
 
   public destroy(): void {
     this.isDestroyed = true;
+    this.presentationChangeHandler = null;
     this.disappearance();
   }
 }

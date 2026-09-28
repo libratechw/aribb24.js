@@ -119,6 +119,10 @@ export default class HLSFeeder extends DecodingFeeder {
 
   private introspect(): void {
     this.registerRenderingLoop();
+    this.scanCurrentBuffer();
+  }
+
+  private scanCurrentBuffer(): void {
     if (this.media == null) { return; }
     const current_time = this.media.currentTime;
     const buffered_start = this.bufferedStart(current_time);
@@ -129,11 +133,6 @@ export default class HLSFeeder extends DecodingFeeder {
       super.onSeeking();
     }
     const replay = this.privious_time == null || current_time < this.privious_time;
-    if (replay) {
-      // The controller's rAF may run after this one. Late cues must be
-      // decoded regardless of which observer sees the new media time first.
-      this.prepare(current_time);
-    }
 
     for (const track of this.id3Tracks) {
       const cues = Array.from(track.cues ?? []);
@@ -194,6 +193,11 @@ export default class HLSFeeder extends DecodingFeeder {
     }
 
     this.privious_time = current_time;
+    if (replay) {
+      // Scan first so prepare() anchors to the management cue in the new
+      // buffered range, not one retained from before the seek.
+      this.prepare(current_time);
+    }
   }
 
   private registerRenderingLoop(): void {
@@ -219,6 +223,12 @@ export default class HLSFeeder extends DecodingFeeder {
     super.onSeeking();
     this.privious_time = null;
     this.cueSnapshots.clear();
+  }
+
+  public onSeeked(): void {
+    // The regular scan loop is stopped while paused, but the seek target can
+    // have a different set of buffered ID3 cues that must be read once.
+    this.scanCurrentBuffer();
   }
 
   private feedID3v2Cue(cue: TextTrackCue): void {

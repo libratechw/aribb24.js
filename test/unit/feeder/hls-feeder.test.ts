@@ -13,6 +13,43 @@ const buffered = (start: number, end: number): TimeRanges => ({
 }) as TimeRanges;
 
 describe('HLSFeeder media lifetime', () => {
+  test('scans buffered ID3 once after a paused seek without starting rAF', () => {
+    const pending = new Map<number, FrameRequestCallback>();
+    let nextId = 1;
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      const id = nextId++;
+      pending.set(id, callback);
+      return id;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => pending.delete(id));
+    const track = {
+      kind: 'metadata', inBandMetadataTrackDispatchType: 'com.apple.streaming',
+      cues: [] as TextTrackCue[],
+    };
+    track.cues.push({
+      startTime: 10.2, track: track as unknown as TextTrack,
+      value: {key: 'PRIV', info: 'aribb24.js', data: new Uint8Array([0x80])},
+    } as unknown as TextTrackCue);
+    const media = Object.assign(new EventTarget(), {
+      currentTime: 10.5, paused: true, seeking: false, buffered: buffered(10, 12),
+      textTracks: Object.assign(new EventTarget(), {0: track, length: 1}),
+    }) as unknown as HTMLVideoElement;
+    const feeder = new HLSFeeder();
+    const received: number[] = [];
+    (feeder as unknown as {feed(data: Uint8Array, pts: number, dts: number): void}).feed = (_data, pts) => {
+      received.push(pts);
+    };
+    try {
+      feeder.attachMedia(media);
+      feeder.onSeeking();
+      feeder.onSeeked();
+      expect(received).toEqual([10.2]);
+      expect(pending.size).toBe(0);
+    } finally {
+      feeder.destroy();
+    }
+  });
+
   test('keeps captions crossed during a short buffer gap, including a late cue', () => {
     const pending = new Map<number, FrameRequestCallback>();
     let nextId = 1;

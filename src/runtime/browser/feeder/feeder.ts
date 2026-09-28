@@ -101,4 +101,8 @@ export default interface Feeder {
   onAttach(): void;
   onDetach(): void;
   onSeeking(): void;
+  /** Refresh buffered metadata before a paused seek is repainted. */
+  onSeeked?(): void;
+  /** Notify the controller when asynchronous decoding changes the visible cue. */
+  setPresentationChangeHandler?(handler: (() => void) | null): void;
 }
