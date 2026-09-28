@@ -26,6 +26,21 @@ describe('DecodingFeeder late metadata', () => {
     }
   });
 
+  test('decodes a cue arriving exactly at a paused media clock', async () => {
+    const feeder = new MPEGTSFeeder();
+    try {
+      feeder.prepare(2);
+      feeder.content(2);
+      const changed = vi.fn();
+      feeder.setPresentationChangeHandler(changed);
+      feeder.feedB24(packet, 2);
+      await vi.waitFor(() => expect(changed).toHaveBeenCalledOnce());
+      expect(feeder.content(2)?.pts).toBe(2);
+    } finally {
+      feeder.destroy();
+    }
+  });
+
   test('keeps normal in-order data on the time-based path', async () => {
     const feeder = new MPEGTSFeeder();
     try {

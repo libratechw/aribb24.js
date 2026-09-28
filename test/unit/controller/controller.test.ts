@@ -160,9 +160,11 @@ describe('Controller visibility and rendering loop', () => {
     expect(render).toHaveBeenCalledTimes(2);
     // Replacing the presentation at the same PTS is a real update, not a
     // duplicate notification.
+    const clearsBeforeReplacement = renderer.clear.mock.calls.length;
     cue = {...cue, data: [ARIBB24BuiltinSoundReplayToken.from(2)]};
     presentationChangeHandler?.();
     expect(render).toHaveBeenCalledTimes(3);
+    expect(renderer.clear).toHaveBeenCalledTimes(clearsBeforeReplacement + 1);
     controller.hide();
     presentationChangeHandler?.();
     controller.show();

@@ -12,6 +12,17 @@ describe("AVL", () => {
     expect([...avl.range(2, 2)]).toEqual([2]);
     expect([...avl.range(1.5, 3)]).toEqual([2, 3]);
   });
+  test('range includes every key sharing its upper order boundary', () => {
+    const compareKey = (a: { dts: number; lang: number }, b: { dts: number; lang: number }) =>
+      compareNumber(a.dts, b.dts) || compareNumber(a.lang, b.lang);
+    const avl = new AVLTree<{ dts: number; lang: number }, string, number>(
+      compareKey, compareNumber, ({ dts }) => dts,
+    );
+    avl.insert({ dts: 1, lang: 0 }, 'management');
+    avl.insert({ dts: 1, lang: 1 }, 'statement');
+    expect([...avl.range(0, 1)]).toEqual(['management', 'statement']);
+    expect([...avl.range(1, 1)]).toEqual(['management', 'statement']);
+  });
   test('floor and ceil retain an ancestor candidate across the opposite branch', () => {
     for (const keys of [[5, 0, 10, 15], Array.from({length: 100}, (_, index) => index)]) {
       const avl = new AVLTree<number, number>(compareNumber, compareNumber, (val) => val);

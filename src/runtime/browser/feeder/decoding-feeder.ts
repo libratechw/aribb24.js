@@ -220,8 +220,8 @@ export default abstract class DecodingFeeder implements Feeder {
     }
     // A native HLS metadata cue can arrive after content() has advanced past
     // its DTS. Keep it in the tree for later seeks, but decode it now as well.
-    // Equality is handled by the next range(), which includes both endpoints.
-    if (!this.notified.has(keyString) && this.priviousTime !== null && dts < this.priviousTime) {
+    // A paused media clock may not call content() again after an equal-DTS cue arrives.
+    if (!this.notified.has(keyString) && this.priviousTime !== null && dts <= this.priviousTime) {
       this.notify(segment);
     }
   }

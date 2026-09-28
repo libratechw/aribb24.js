@@ -268,7 +268,10 @@ export default class Controller {
       } else {
         // A renderer may consume and close bitmap tokens. Each renderer must
         // own its copy, including during a resize repaint.
-        renderers.forEach((renderer) => renderer.render(structuredClone(current.state), structuredClone(current.data), structuredClone(current.info)));
+        renderers.forEach((renderer) => {
+          renderer.clear();
+          renderer.render(structuredClone(current.state), structuredClone(current.data), structuredClone(current.info));
+        });
       }
 
       if (renderers === this.renderers) {
