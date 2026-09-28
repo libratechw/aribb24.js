@@ -45,6 +45,8 @@ export default abstract class DecodingFeeder implements Feeder {
   private priviousManagementData: ARIBB24CaptionManagement | null = null;
   private desiredLang: number | null = null;
   private decoder: AVLTree<DecodingOrderedKey, QueuedDecodingData, number> = new AVLTree<DecodingOrderedKey, QueuedDecodingData, number>(compareKey, compareNumber, calcDecodingOrder);
+  private managementTimes: AVLTree<number, number> = new AVLTree<number, number>(compareNumber, compareNumber, (time) => time);
+  private replayAfterSeek = false;
   private decoderBuffer: QueuedDecodingData[] = [];
   private notified: Set<string> = new Set();
   private decodingPromise: Promise<void>;
@@ -191,6 +193,9 @@ export default abstract class DecodingFeeder implements Feeder {
     const segment = { pts, caption, key: keyString };
     const key = { dts, lang };
     this.decoder.insert(key, segment);
+    if (caption.tag === 'CaptionManagement') {
+      this.managementTimes.insert(dts, dts);
+    }
     // A native HLS metadata cue can arrive after content() has advanced past
     // its DTS. Keep it in the tree for later seeks, but decode it now as well.
     // Equality is handled by the next range(), whose lower bound is inclusive.
@@ -200,10 +205,17 @@ export default abstract class DecodingFeeder implements Feeder {
   }
 
   public prepare(time: number): void {
-    this.priviousTime = time;
+    // The seek reset discards decoded state, not the packets already received.
+    // Replay from the latest management packet so statements within the
+    // buffered media can be decoded with their language and DRCS state.
+    this.priviousTime = this.replayAfterSeek ? (this.managementTimes.floor(time) ?? time) : time;
+    this.replayAfterSeek = false;
   }
 
   public content(time: number): FeederPresentationData | null {
+    if (this.replayAfterSeek) {
+      this.prepare(time);
+    }
     if (this.priviousTime != null) {
       for (const segment of this.decoder.range(this.priviousTime, time)) {
         this.notify(segment);
@@ -215,6 +227,8 @@ export default abstract class DecodingFeeder implements Feeder {
 
   public clear(): void {
     this.decoder.clear();
+    this.managementTimes.clear();
+    this.replayAfterSeek = false;
     this.disappearance();
   }
 
@@ -238,6 +252,7 @@ export default abstract class DecodingFeeder implements Feeder {
 
   public onSeeking(): void {
     this.disappearance();
+    this.replayAfterSeek = true;
   }
 
   public destroy(): void {
