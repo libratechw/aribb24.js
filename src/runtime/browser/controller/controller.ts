@@ -169,8 +169,14 @@ export default class Controller {
     // Repainting the same presentation appends its glyphs a second time.
     if (current != null && currentTime < current.pts + current.duration &&
         current === this.lastPaintedCue && this.privious_pts === current.pts) { return; }
-    if (this.isShowing) {
-      this.paint(true);
+    // A newly arrived statement can extend the picture already on screen.
+    // Replacing the same presentation instead needs a fresh image.
+    const append = current != null && currentTime < current.pts + current.duration &&
+      this.privious_pts != null && current.pts > this.privious_pts;
+    if (this.isShowing || this.needsRepaint.size === 0) {
+      // Hidden renderers keep their backing image; update it before show()
+      // unless a seek or resize has already invalidated it.
+      this.paint(!append);
     } else {
       this.renderers.forEach((renderer) => this.needsRepaint.add(renderer));
     }
@@ -316,8 +322,12 @@ export default class Controller {
       this.renderers.forEach((renderer) => renderer.render(structuredClone(current.state), structuredClone(current.data), structuredClone(current.info)));
       this.privious_pts = current.pts
       this.lastPaintedCue = current;
-      this.pendingSoundCuePts = null;
-      this.emitBuiltinSounds(current);
+      if (this.media.paused) {
+        this.pendingSoundCuePts = current.pts;
+      } else {
+        this.pendingSoundCuePts = null;
+        this.emitBuiltinSounds(current);
+      }
     }
   }
 

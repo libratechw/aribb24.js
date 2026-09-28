@@ -44,6 +44,78 @@ describe('Controller visibility and rendering loop', () => {
     feeder.destroy();
   });
 
+  test('appends a late new line while paused without erasing the earlier line', () => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    const media = Object.assign(new EventTarget(), {
+      currentTime: 1, paused: true, seeking: false, parentElement: {} as HTMLElement,
+      buffered: { length: 1, start: () => 0, end: () => 3 } as TimeRanges,
+    }) as HTMLVideoElement;
+    let cue = { pts: 1, duration: 2, state: aribInitialState,
+      data: [ARIBB24CharacterToken.from('あ')], info: { association: 'ARIB' as const, language: 'jpn' } };
+    let changed: (() => void) | null = null;
+    const feeder = {
+      prepare() {}, content: () => cue, clear() {}, destroy() {}, onAttach() {}, onDetach() {},
+      onSeeking() {}, onSeeked() {},
+      setPresentationChangeHandler: (handler: (() => void) | null) => { changed = handler; },
+    } as unknown as Feeder;
+    const renderer = new TextRenderer();
+    const controller = new Controller();
+    controller.attachRenderer(renderer);
+    controller.attachFeeder(feeder);
+    controller.attachMedia(media);
+    media.dispatchEvent(new Event('seeked'));
+    expect(renderer.getText()).toBe('あ');
+    media.currentTime = 2;
+    cue = { ...cue, pts: 2, data: [ARIBB24CharacterToken.from('い')] };
+    changed?.();
+    expect(renderer.getText()).toBe('あい');
+    controller.detachMedia();
+    controller.detachFeeder();
+    feeder.destroy();
+  });
+
+  test('retains built-up lines when a cue arrives during a hidden pause', () => {
+    vi.stubGlobal('requestAnimationFrame', () => 1);
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    const media = Object.assign(new EventTarget(), {
+      currentTime: 1, paused: true, seeking: false, parentElement: {} as HTMLElement,
+      buffered: { length: 1, start: () => 0, end: () => 3 } as TimeRanges,
+    }) as HTMLVideoElement;
+    let cue = { pts: 1, duration: 2, state: aribInitialState,
+      data: [ARIBB24CharacterToken.from('あ')], info: { association: 'ARIB' as const, language: 'jpn' } };
+    let changed: (() => void) | null = null;
+    const feeder = {
+      prepare() {}, content: () => cue, clear() {}, destroy() {}, onAttach() {}, onDetach() {},
+      onSeeking() {}, onSeeked() {},
+      setPresentationChangeHandler: (handler: (() => void) | null) => { changed = handler; },
+    } as unknown as Feeder;
+    const renderer = new TextRenderer();
+    const controller = new Controller();
+    controller.attachRenderer(renderer);
+    controller.attachFeeder(feeder);
+    controller.attachMedia(media);
+    media.dispatchEvent(new Event('seeked'));
+    controller.hide();
+    media.currentTime = 2;
+    cue = { ...cue, pts: 2, data: [ARIBB24CharacterToken.from('い')] };
+    changed?.();
+    controller.show();
+    expect(renderer.getText()).toBe('あい');
+    controller.hide();
+    controller.detachMedia();
+    controller.detachFeeder();
+    feeder.destroy();
+  });
+
   test('passes an unbuffered attach position to a feeder awaiting seek replay', () => {
     const feeder = {
       prepare: vi.fn(), content: vi.fn(() => null),
