@@ -6,6 +6,18 @@ const compareNumber = (a: number, b: number) => {
 }
 
 describe("AVL", () => {
+  test('floor and ceil retain an ancestor candidate across the opposite branch', () => {
+    for (const keys of [[5, 0, 10, 15], Array.from({length: 100}, (_, index) => index)]) {
+      const avl = new AVLTree<number, number>(compareNumber, compareNumber, (val) => val);
+      for (const value of keys) avl.insert(value, value);
+      const sorted = [...keys].sort((a, b) => a - b);
+      for (let query = sorted[0] - 1; query <= sorted.at(-1)! + 1; query++) {
+        expect(avl.floor(query)).toBe(sorted.filter(value => value <= query).at(-1));
+        expect(avl.ceil(query)).toBe(sorted.find(value => value >= query));
+      }
+    }
+  });
+
   test('Insert', () => {
     const avl = new AVLTree<number, number>(compareNumber, compareNumber, (val) => val);
 
