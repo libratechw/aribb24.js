@@ -17,7 +17,7 @@ type QueuedDecodingData = FeederDecodingData & { key: string };
 
 // Caption packets can precede the first buffered video frame of a seek by a
 // small amount. Keep that pre-roll without replaying a distant old range.
-const SEEK_BUFFER_PREROLL_SECONDS = 0.5;
+export const SEEK_BUFFER_PREROLL_SECONDS = 0.5;
 
 const calcDecodingOrder = ({ dts }: DecodingOrderedKey): number => {
   return dts;
@@ -220,7 +220,7 @@ export default abstract class DecodingFeeder implements Feeder {
     }
     // A native HLS metadata cue can arrive after content() has advanced past
     // its DTS. Keep it in the tree for later seeks, but decode it now as well.
-    // Equality is handled by the next range(), whose lower bound is inclusive.
+    // Equality is handled by the next range(), which includes both endpoints.
     if (!this.notified.has(keyString) && this.priviousTime !== null && dts < this.priviousTime) {
       this.notify(segment);
     }
@@ -261,7 +261,7 @@ export default abstract class DecodingFeeder implements Feeder {
     }
     if (this.priviousTime != null) {
       for (const segment of this.decoder.range(this.priviousTime, time)) {
-        this.notify(segment);
+        if (!this.notified.has(segment.key)) { this.notify(segment); }
       }
     }
     this.pendingReplayWindow = false;

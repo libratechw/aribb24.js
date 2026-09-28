@@ -8,7 +8,7 @@ import { ARIBB24CaptionData, RollupModeType, TimeControlModeType } from '@/lib/d
 
 afterEach(() => vi.unstubAllGlobals());
 
-test('decodes and repaints a buffered HLS cue after play, pause and seek', async () => {
+test.each([1, 1.5])('decodes and repaints a buffered HLS cue after play, pause and seek to %s', async (seekTime) => {
   const pending = new Map<number, FrameRequestCallback>();
   let nextId = 1;
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
@@ -69,10 +69,10 @@ test('decodes and repaints a buffered HLS cue after play, pause and seek', async
 
     mediaElement.seeking = true;
     media.dispatchEvent(new Event('seeking'));
-    mediaElement.currentTime = 1.5;
+    mediaElement.currentTime = seekTime;
     mediaElement.seeking = false;
     media.dispatchEvent(new Event('seeked'));
-    await vi.waitFor(() => expect(feeder.content(1.5)?.pts).toBe(1));
+    await vi.waitFor(() => expect(feeder.content(seekTime)?.pts).toBe(1));
     await vi.waitFor(() => expect(render.mock.lastCall?.[1]).toEqual([]));
     expect(pending.size).toBe(0);
   } finally {
@@ -82,7 +82,7 @@ test('decodes and repaints a buffered HLS cue after play, pause and seek', async
   }
 });
 
-test('repaints a paused HLS seek after the target buffer and cues arrive later', async () => {
+test('repaints a paused HLS seek when management starts just before the target buffer', async () => {
   vi.stubGlobal('requestAnimationFrame', () => 1);
   vi.stubGlobal('cancelAnimationFrame', () => {});
   vi.stubGlobal('ResizeObserver', class {
@@ -133,7 +133,7 @@ test('repaints a paused HLS seek after the target buffer and cues arrive later',
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(render).not.toHaveBeenCalled();
 
-    track.cues.push(...[[999.2, management], [999.5, statement]].map(([startTime, caption]) => ({
+    track.cues.push(...[[998.8, management], [999.5, statement]].map(([startTime, caption]) => ({
       startTime, track: track as unknown as TextTrack,
       value: {key: 'PRIV', info: 'aribb24.js', data: new Uint8Array([
         0x80, 0, 0, ...new Uint8Array(mux(caption as ARIBB24CaptionData)),

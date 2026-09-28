@@ -1,7 +1,7 @@
 import { PartialFeederOption } from './feeder';
 import { parseID3v2 } from '../../../util/id3';
 import { base64ToUint8Array } from '../../../util/binary';
-import DecodingFeeder from './decoding-feeder';
+import DecodingFeeder, { SEEK_BUFFER_PREROLL_SECONDS } from './decoding-feeder';
 
 export default class HLSFeeder extends DecodingFeeder {
   // Shared by feeders from this module instance, not by separately loaded bundles.
@@ -184,11 +184,12 @@ export default class HLSFeeder extends DecodingFeeder {
       const changed = previous == null || previous.length !== cues.length
         || previous.first !== cues[0] || previous.last !== cues[cues.length - 1];
       this.cueSnapshots.set(track, { length: cues.length, first: cues[0], last: cues[cues.length - 1] });
-      // On attach, seek, or cue-list updates, scan only the buffered range
-      // containing the current media time. Older ranges may belong to a
-      // different seek position and must not restore stale captions.
+      // On attach or seek, scan the current buffered range and its short
+      // decoding pre-roll. For later cue-list updates, start at the previous
+      // scan position so an old cue is not fed a second time.
       const scanBufferedRange = replay || changed;
-      const scan_start = replay ? buffered_start
+      const bufferScanStart = buffered_start - SEEK_BUFFER_PREROLL_SECONDS;
+      const scan_start = replay ? bufferScanStart
         : changed ? Math.min(buffered_start, this.privious_time!) : this.privious_time!;
 
       let prev_index: number | null = null;

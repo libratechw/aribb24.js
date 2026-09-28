@@ -336,7 +336,7 @@ class AVLTreeNode<K, V, O = K> implements AVLTreeNodeInterface<K, V, O> {
     const t = this.compareOrder(to, this.order);
 
     if (f <= 0) { yield* (this.left?.range(from, to) ?? []); }
-    if (f <= 0 && t > 0){ yield this.value; }
+    if (f <= 0 && t >= 0){ yield this.value; }
     if (t > 0) { yield* (this.right?.range(from, to) ?? []); }
   }
 }

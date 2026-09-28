@@ -6,6 +6,12 @@ const compareNumber = (a: number, b: number) => {
 }
 
 describe("AVL", () => {
+  test('range includes both endpoints', () => {
+    const avl = new AVLTree<number, number>(compareNumber, compareNumber, (val) => val);
+    for (const value of [1, 2, 3]) avl.insert(value, value);
+    expect([...avl.range(2, 2)]).toEqual([2]);
+    expect([...avl.range(1.5, 3)]).toEqual([2, 3]);
+  });
   test('floor and ceil retain an ancestor candidate across the opposite branch', () => {
     for (const keys of [[5, 0, 10, 15], Array.from({length: 100}, (_, index) => index)]) {
       const avl = new AVLTree<number, number>(compareNumber, compareNumber, (val) => val);
