@@ -149,6 +149,25 @@ describe('DecodingFeeder late metadata', () => {
     }
   });
 
+  test('decodes a changed packet at a previously notified DTS', async () => {
+    const feeder = new MPEGTSFeeder();
+    try {
+      feeder.prepare(2);
+      feeder.content(2);
+      feeder.feedB24(packet, 2);
+      await vi.waitFor(() => expect(feeder.content(2)?.pts).toBe(2));
+      const first = feeder.content(2);
+      const replacement = new Uint8Array([0x80, 0, 0, ...new Uint8Array(mux({
+        ...management, group: 1,
+      }))]);
+      feeder.feedB24(replacement, 2);
+      await vi.waitFor(() => expect(feeder.content(2)).not.toBe(first));
+      expect(feeder.content(2)?.pts).toBe(2);
+    } finally {
+      feeder.destroy();
+    }
+  });
+
   test('a previously stored but not decoded cue can still be delivered late', () => {
     const feeder = new MPEGTSFeeder();
     try {

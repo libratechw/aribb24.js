@@ -279,9 +279,11 @@ describe('Controller visibility and rendering loop', () => {
     }) as HTMLVideoElement;
     let cue: NonNullable<ReturnType<Feeder['content']>> = { pts: 1, duration: 2, state: aribInitialState,
       data: [ARIBB24CharacterToken.from('あ')], info: { association: 'ARIB' as const, language: 'jpn' } };
+    const firstCue = cue;
     let changed: (() => void) | null = null;
     const feeder = {
-      prepare() {}, content: () => cue, clear() {}, destroy() {}, onAttach() {}, onDetach() {},
+      prepare() {}, content: (time: number) => time < 2 ? firstCue : cue,
+      clear() {}, destroy() {}, onAttach() {}, onDetach() {},
       onSeeking() {}, onSeeked() {},
       setPresentationChangeHandler: (handler: (() => void) | null) => { changed = handler; },
     } as unknown as Feeder;
@@ -302,6 +304,10 @@ describe('Controller visibility and rendering loop', () => {
     changed?.();
     expect(text.getText()).toBe('あい');
 
+    resize([{ target: container, devicePixelContentBoxSize: [{ inlineSize: 640, blockSize: 360 }] } as unknown as ResizeObserverEntry], {} as ResizeObserver);
+    expect(text.getText()).toBe('あい');
+    controller.detachMedia();
+    controller.attachMedia(media);
     resize([{ target: container, devicePixelContentBoxSize: [{ inlineSize: 640, blockSize: 360 }] } as unknown as ResizeObserverEntry], {} as ResizeObserver);
     expect(text.getText()).toBe('あい');
 
@@ -525,6 +531,21 @@ describe('Controller visibility and rendering loop', () => {
   });
 
   test('gives every renderer its own cue tokens during a resize repaint', () => {
+    const clone = structuredClone;
+    vi.stubGlobal('structuredClone', (value: unknown) => {
+      const copy = clone(value);
+      const tokensToClose = Array.isArray(copy) ? copy : (copy as { data?: unknown[] })?.data;
+      if (Array.isArray(tokensToClose)) {
+        for (const token of tokensToClose) {
+          if (token.tag === 'Bitmap') {
+            Object.defineProperty(token.normal_bitmap, 'close', {
+              value: () => { token.normal_bitmap.closed = true; },
+            });
+          }
+        }
+      }
+      return copy;
+    });
     const tokens = [{ tag: 'Bitmap', normal_bitmap: { closed: false } }];
     const observed: boolean[] = [];
     const renderer = (consume: boolean) => ({
