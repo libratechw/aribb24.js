@@ -162,13 +162,29 @@ export default class Controller {
   }
 
   private onPresentationChanged() {
-    if (!this.media?.paused || this.media.seeking) { return; }
+    if (!this.media || this.media.seeking) { return; }
     const currentTime = this.media.currentTime;
     const current = this.feeder?.content(currentTime, this.bufferedStart(currentTime)) ?? null;
     // The decoder may notify us about an older cue or repeat a feeder scan.
     // Repainting the same presentation appends its glyphs a second time.
     if (current != null && currentTime < current.pts + current.duration &&
         current === this.lastPaintedCue && this.privious_pts === current.pts) { return; }
+    if (!this.media.paused) {
+      if (!this.isShowing) {
+        this.pendingSoundCuePts = null;
+        this.renderers.forEach((renderer) => this.needsRepaint.add(renderer));
+        return;
+      }
+      // A statement can finish decoding after its same-time management cue
+      // has already been painted. The regular loop skips unchanged PTS.
+      if (current != null && currentTime < current.pts + current.duration &&
+          this.privious_pts === current.pts) {
+        this.paint(true);
+        this.pendingSoundCuePts = null;
+        this.emitBuiltinSounds(current);
+      }
+      return;
+    }
     // A newly arrived statement can extend the picture already on screen.
     // Replacing the same presentation instead needs a fresh image.
     const append = current != null && currentTime < current.pts + current.duration &&

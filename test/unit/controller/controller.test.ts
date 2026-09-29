@@ -11,6 +11,102 @@ import TextRenderer from '@/runtime/browser/renderer/text/text-renderer';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Controller visibility and rendering loop', () => {
+  test.each([false, true])('does not replay sound after a same-time update (hidden=%s)', (hidden) => {
+    const pending = new Map<number, FrameRequestCallback>();
+    let nextId = 1;
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      const id = nextId++;
+      pending.set(id, callback);
+      return id;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => pending.delete(id));
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    const media = Object.assign(new EventTarget(), {
+      currentTime: 1, paused: true, seeking: false, parentElement: {} as HTMLElement,
+      buffered: { length: 1, start: () => 0, end: () => 2 } as TimeRanges,
+    }) as HTMLVideoElement;
+    let cue = { pts: 1, duration: 1, state: aribInitialState,
+      data: [ARIBB24BuiltinSoundReplayToken.from(1)], info: { association: 'ARIB' as const, language: 'jpn' } };
+    let changed: (() => void) | null = null;
+    const feeder = {
+      prepare() {}, content: () => cue, clear() {}, destroy() {}, onAttach() {}, onDetach() {},
+      onSeeking() {}, onSeeked() {},
+      setPresentationChangeHandler: (handler: (() => void) | null) => { changed = handler; },
+    } as unknown as Feeder;
+    const renderer = new TextRenderer();
+    const sound = vi.fn();
+    const controller = new Controller();
+    controller.on(EventType.BuiltinSound, sound);
+    controller.attachRenderer(renderer);
+    controller.attachFeeder(feeder);
+    controller.attachMedia(media);
+    media.dispatchEvent(new Event('seeking'));
+    media.dispatchEvent(new Event('seeked'));
+    if (hidden) controller.hide();
+    media.paused = false;
+    media.dispatchEvent(new Event('play'));
+    cue = { ...cue, data: [ARIBB24BuiltinSoundReplayToken.from(2)] };
+    changed?.();
+    expect(sound).toHaveBeenCalledTimes(hidden ? 0 : 1);
+    if (hidden) controller.show();
+    const [id, callback] = pending.entries().next().value!;
+    pending.delete(id);
+    callback(0);
+    expect(sound).toHaveBeenCalledTimes(hidden ? 0 : 1);
+    controller.hide();
+    controller.detachMedia();
+    controller.detachFeeder();
+  });
+
+  test('repaints a statement decoded after a same-time cue during playback', () => {
+    const pending = new Map<number, FrameRequestCallback>();
+    let nextId = 1;
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      const id = nextId++;
+      pending.set(id, callback);
+      return id;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => pending.delete(id));
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    const media = Object.assign(new EventTarget(), {
+      currentTime: 1, paused: false, seeking: false, parentElement: {} as HTMLElement,
+      buffered: { length: 1, start: () => 0, end: () => 2 } as TimeRanges,
+    }) as HTMLVideoElement;
+    let cue = { pts: 1, duration: 1, state: aribInitialState,
+      data: [ARIBB24CharacterToken.from('あ')], info: { association: 'ARIB' as const, language: 'jpn' } };
+    let changed: (() => void) | null = null;
+    const feeder = {
+      prepare() {}, content: () => cue, clear() {}, destroy() {}, onAttach() {}, onDetach() {},
+      onSeeking() {}, setPresentationChangeHandler: (handler: (() => void) | null) => { changed = handler; },
+    } as unknown as Feeder;
+    const renderer = new TextRenderer();
+    const controller = new Controller();
+    controller.attachRenderer(renderer);
+    controller.attachFeeder(feeder);
+    controller.attachMedia(media);
+    media.dispatchEvent(new Event('play'));
+    const [id, callback] = pending.entries().next().value!;
+    pending.delete(id);
+    callback(0);
+    expect(renderer.getText()).toBe('あ');
+    cue = { ...cue, data: [ARIBB24CharacterToken.from('い')] };
+    changed?.();
+    expect(renderer.getText()).toBe('い');
+    changed?.();
+    expect(renderer.getText()).toBe('い');
+    controller.hide();
+    controller.detachMedia();
+    controller.detachFeeder();
+  });
+
   test('replaces same-time text instead of appending to the retained image', () => {
     vi.stubGlobal('ResizeObserver', class {
       observe() {}
