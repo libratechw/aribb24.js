@@ -6,6 +6,20 @@ import { ARIBB24BrowserBitmapParsedToken, ARIBB24BrowserParser, ARIBB24BrowserTo
 import { renderCharacter, renderDRCS } from "../../../common/renderer/canvas/renderer-strategy";
 
 export default (target: HTMLCanvasElement | OffscreenCanvas | null, buffer: HTMLCanvasElement | OffscreenCanvas, state: ARIBB24ParserState, tokens: ARIBB24BrowserToken[], info: CaptionAssociationInformation, rendererOption: CanvasRendererOption): void => {
+  try {
+    renderCanvas(target, buffer, state, tokens, info, rendererOption);
+  } finally {
+    // The renderer owns the token copies it received, even when a context is
+    // unavailable or drawing throws before the Bitmap token is reached.
+    for (const token of tokens) {
+      if (token.tag !== 'Bitmap') { continue; }
+      token.normal_bitmap.close();
+      token.flashing_bitmap?.close();
+    }
+  }
+};
+
+const renderCanvas = (target: HTMLCanvasElement | OffscreenCanvas | null, buffer: HTMLCanvasElement | OffscreenCanvas, state: ARIBB24ParserState, tokens: ARIBB24BrowserToken[], info: CaptionAssociationInformation, rendererOption: CanvasRendererOption): void => {
   // render background
   let magnification: [number, number] = [1, 1];
   {
@@ -84,6 +98,4 @@ const renderBitmap = (context: CanvasRenderingContext2D | OffscreenCanvasRenderi
   const { x_position, y_position, width, height } = token;
 
   context.drawImage(token.normal_bitmap, x_position * magnification[0], y_position * magnification[1], width* magnification[0], height * magnification[1]);
-  token.normal_bitmap.close();
-  token.flashing_bitmap?.close();
 }
