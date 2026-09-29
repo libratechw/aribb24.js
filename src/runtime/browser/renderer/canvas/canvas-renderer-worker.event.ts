@@ -109,4 +109,17 @@ export const FromWorkerToMainEventError = {
   },
 };
 
-export type FromWorkerToMainEvent = FromWorkerToMainEventImageBitmap | FromWorkerToMainEventError;
+export type FromWorkerToMainEventRenderError = {
+  type: 'render-error';
+  message: string;
+};
+export const FromWorkerToMainEventRenderError = {
+  from(error: unknown): FromWorkerToMainEventRenderError {
+    return {
+      type: 'render-error',
+      message: error instanceof Error ? error.message : String(error),
+    };
+  },
+};
+
+export type FromWorkerToMainEvent = FromWorkerToMainEventImageBitmap | FromWorkerToMainEventError | FromWorkerToMainEventRenderError;

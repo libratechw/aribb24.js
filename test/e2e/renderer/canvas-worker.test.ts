@@ -34,25 +34,25 @@ describe('ARIB B24 Worker Canvas Renderer', () => {
     }
   });
 
-  test('reports a Worker drawing error and settles pending image requests', async () => {
-    let report!: (error: Error) => void;
-    const failure = new Promise<Error>((resolve) => { report = resolve; });
+  test('keeps rendering after one malformed cue', async () => {
+    const report = vi.fn();
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     const renderer = new CanvasWebWorkerRenderer(undefined, report);
     try {
       renderer.onAttach(document.body);
       renderer.onContainerResize(64, 64);
       renderer.render(aribInitialState, [ARIBB24CharacterToken.from('A')], null as never);
-      const pending = renderer.getPresentationImageBitmap();
-      const error = await Promise.race([
-        failure,
-        new Promise<Error>((_, reject) => setTimeout(() => reject(new Error('Worker error was not reported')), 3000)),
-      ]);
-      expect(error.message).toBeTruthy();
-      expect(await pending).toBeNull();
-      expect(await renderer.getPresentationImageBitmap()).toBeNull();
+      await vi.waitFor(() => expect(logged).toHaveBeenCalledWith(
+        '[aribb24.js] Caption rendering failed:', expect.any(String)));
+      renderer.render(aribInitialState, [ARIBB24CharacterToken.from('B')], info);
+      const presented = await renderer.getPresentationImageBitmap();
+      expect(presented?.width).toBe(64);
+      presented?.close();
+      expect(report).not.toHaveBeenCalled();
     } finally {
       renderer.onDetach();
       renderer.destroy();
+      logged.mockRestore();
     }
   });
 

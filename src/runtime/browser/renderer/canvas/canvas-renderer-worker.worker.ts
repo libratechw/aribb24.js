@@ -1,6 +1,6 @@
 import { ExhaustivenessError } from "../../../../util/error";
 import render from "./canvas-renderer-strategy";
-import { FromMainToWorkerEvent, FromWorkerToMainEventError, FromWorkerToMainEventImageBitmap } from "./canvas-renderer-worker.event";
+import { FromMainToWorkerEvent, FromWorkerToMainEventError, FromWorkerToMainEventImageBitmap, FromWorkerToMainEventRenderError } from "./canvas-renderer-worker.event";
 
 let present: OffscreenCanvas | null = null;
 let buffer: OffscreenCanvas | null = null;
@@ -57,7 +57,12 @@ self.addEventListener('message', (event: MessageEvent<FromMainToWorkerEvent>) =>
         }
         break;
       }
-      render(present, buffer, state, tokens, info, option);
+      try {
+        render(present, buffer, state, tokens, info, option);
+      } catch (error) {
+        // A malformed cue must not permanently disable later captions.
+        self.postMessage(FromWorkerToMainEventRenderError.from(error));
+      }
 
       break;
     }
@@ -68,8 +73,13 @@ self.addEventListener('message', (event: MessageEvent<FromMainToWorkerEvent>) =>
       }
 
       createImageBitmap(present).then((bitmap) => {
-        workerScope.postMessage(FromWorkerToMainEventImageBitmap.from(bitmap), [bitmap]);
-      }).catch((error) => self.postMessage(FromWorkerToMainEventError.from(error)));
+        try {
+          workerScope.postMessage(FromWorkerToMainEventImageBitmap.from(bitmap), [bitmap]);
+        } catch (error) {
+          bitmap.close();
+          self.postMessage(FromWorkerToMainEventImageBitmap.from());
+        }
+      }).catch(() => self.postMessage(FromWorkerToMainEventImageBitmap.from()));
 
       break;
     }

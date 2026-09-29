@@ -47,6 +47,10 @@ export default class CanvasWebWorkerRenderer extends CanvasRenderer {
         this.fail(new Error(event.data.message));
         break;
       }
+      case 'render-error': {
+        console.error('[aribb24.js] Caption rendering failed:', event.data.message);
+        break;
+      }
     }
   };
 
