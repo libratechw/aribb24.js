@@ -400,7 +400,13 @@ export default class Controller {
         // own its copy, including during a resize repaint.
         const existingPicture = current === this.lastPaintedCue &&
           this.privious_pts === current.pts && this.paintedCues.length > 0;
-        const picture = existingPicture ? this.paintedCues.map(({ snapshot }) => snapshot) : [current];
+        const replacedLastCue = !existingPicture && current !== this.lastPaintedCue &&
+          this.privious_pts === current.pts &&
+          this.paintedCues.at(-1)?.source === this.lastPaintedCue;
+        const precedingCues = replacedLastCue && !hasImmediateClear(current)
+          ? this.paintedCues.slice(0, -1) : [];
+        const picture = existingPicture ? this.paintedCues.map(({ snapshot }) => snapshot)
+          : [...precedingCues.map(({ snapshot }) => snapshot), current];
         renderers.forEach((renderer) => {
           renderer.clear();
           for (const cue of picture) {
@@ -408,8 +414,14 @@ export default class Controller {
           }
         });
         if (renderers === this.renderers && !existingPicture) {
-          this.releasePaintedCues();
-          this.paintedCues = [rememberCue(current)];
+          if (precedingCues.length > 0) {
+            const replaced = this.paintedCues.at(-1)!;
+            if (replaced.ownsSnapshot) { closeSnapshot(replaced.snapshot); }
+            this.paintedCues = [...precedingCues, rememberCue(current)];
+          } else {
+            this.releasePaintedCues();
+            this.paintedCues = [rememberCue(current)];
+          }
         }
       }
 
