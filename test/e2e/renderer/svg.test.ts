@@ -4,6 +4,7 @@ import { page } from '@vitest/browser/context'
 import { SVGDOMRenderer } from '@/index';
 import aribInitialState from '@/lib/parser/state/ARIB';
 import { CaptionAssociationInformation } from '@/lib/demuxer/b24/datagroup';
+import type { DecodedBitmap } from '@/runtime/browser/types';
 import {ARIBB24ActivePositionForwardToken, ARIBB24ActivePositionSetToken, ARIBB24CharacterCompositionDotDesignationToken, ARIBB24CharacterToken, ARIBB24ClearScreenToken, ARIBB24ColorControlBackgroundToken, ARIBB24FlashingControlToken, ARIBB24FlashingControlType, ARIBB24HilightingCharacterBlockToken, ARIBB24MiddleSizeToken, ARIBB24NormalSizeToken, ARIBB24PalletControlToken, ARIBB24SetDisplayFormatToken, ARIBB24SetDisplayPositionToken, ARIBB24SetHorizontalSpacingToken, ARIBB24SetVerticalSpacingToken, ARIBB24SetWritingFormatToken, ARIBB24WhiteForegroundToken } from '@/lib/tokenizer/token';
 
 const generateCharacter = (str: string) => {
@@ -12,6 +13,26 @@ const generateCharacter = (str: string) => {
 }
 
 describe('ARIB B24 Canvas Renderer', () => {
+  test('releases its Bitmap copy after rendering', async () => {
+    const source = document.createElement('canvas');
+    source.width = source.height = 2;
+    const bitmap = await createImageBitmap(source);
+    const token: DecodedBitmap = {
+      tag: 'Bitmap', x_position: 0, y_position: 0, width: 2, height: 2,
+      normal_dataurl: source.toDataURL(), normal_bitmap: bitmap,
+    };
+    const renderer = new SVGDOMRenderer();
+    renderer.onAttach(document.body);
+    try {
+      renderer.render(aribInitialState, [token], { association: 'ARIB', language: 'und' });
+      expect(bitmap.width).toBe(0);
+    } finally {
+      renderer.onDetach();
+      renderer.destroy();
+      bitmap.close();
+    }
+  });
+
   test('Flashing Rendering', async () => {
     const width = 960, height = 540;
     const info: CaptionAssociationInformation = {
