@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
 import { CanvasWebWorkerRenderer } from '@/index';
 import aribInitialState from '@/lib/parser/state/ARIB';
@@ -53,6 +53,37 @@ describe('ARIB B24 Worker Canvas Renderer', () => {
     } finally {
       renderer.onDetach();
       renderer.destroy();
+    }
+  });
+
+  test('reports a synchronous resize-send failure after the Controller pass', async () => {
+    const postMessage = Worker.prototype.postMessage;
+    const intercepted = vi.spyOn(Worker.prototype, 'postMessage').mockImplementation(function(this: Worker, message: any, transfer?: Transferable[]) {
+      if (message?.type === 'resize') { throw new Error('resize message rejected'); }
+      postMessage.call(this, message, transfer ?? []);
+    });
+    let inResize = false;
+    let reportedInsideResize: boolean | null = null;
+    let resolveFailure!: () => void;
+    const failure = new Promise<void>((resolve) => { resolveFailure = resolve; });
+    try {
+      const renderer = new CanvasWebWorkerRenderer(undefined, () => {
+        reportedInsideResize = inResize;
+        resolveFailure();
+      });
+      try {
+        renderer.onAttach(document.body);
+        inResize = true;
+        renderer.onContainerResize(64, 64);
+        inResize = false;
+        await failure;
+        expect(reportedInsideResize).toBe(false);
+      } finally {
+        renderer.onDetach();
+        renderer.destroy();
+      }
+    } finally {
+      intercepted.mockRestore();
     }
   });
 });

@@ -70,11 +70,16 @@ export default class CanvasWebWorkerRenderer extends CanvasRenderer {
     this.failed = true;
     this.worker.terminate();
     this.settleBitmap(null);
-    if (this.onFailure) {
-      this.onFailure(error);
-    } else {
-      console.error('[aribb24.js] Caption Worker failed:', error);
-    }
+    // A postMessage failure can occur inside a Controller render or resize
+    // pass. Let that pass finish before a consumer replaces this renderer.
+    queueMicrotask(() => {
+      if (this.destroyed) { return; }
+      if (this.onFailure) {
+        this.onFailure(error);
+      } else {
+        console.error('[aribb24.js] Caption Worker failed:', error);
+      }
+    });
   }
 
   public resize(width: number, height: number): void {
