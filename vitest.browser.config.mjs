@@ -13,7 +13,11 @@ export default defineConfig({
     browser: {
       enabled: true,
       name: "chromium",
-      provider: playwright(),
+      provider: playwright({
+        launchOptions: process.env.ARIBB24_CHROME_BIN
+          ? { executablePath: process.env.ARIBB24_CHROME_BIN }
+          : undefined,
+      }),
       instances: [
         { browser: 'chromium' },
       ],

@@ -96,4 +96,17 @@ export const FromWorkerToMainEventImageBitmap = {
   }
 }
 
-export type FromWorkerToMainEvent = FromWorkerToMainEventImageBitmap;
+export type FromWorkerToMainEventError = {
+  type: 'error';
+  message: string;
+};
+export const FromWorkerToMainEventError = {
+  from(error: unknown): FromWorkerToMainEventError {
+    return {
+      type: 'error',
+      message: error instanceof Error ? error.message : String(error),
+    };
+  },
+};
+
+export type FromWorkerToMainEvent = FromWorkerToMainEventImageBitmap | FromWorkerToMainEventError;

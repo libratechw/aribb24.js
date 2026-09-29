@@ -1,12 +1,14 @@
 import { ExhaustivenessError } from "../../../../util/error";
-import render from "./canvas-renderer-strategy"
-import { FromMainToWorkerEvent, FromWorkerToMainEventImageBitmap } from "./canvas-renderer-worker.event";
+import render from "./canvas-renderer-strategy";
+import { FromMainToWorkerEvent, FromWorkerToMainEventError, FromWorkerToMainEventImageBitmap } from "./canvas-renderer-worker.event";
 
 let present: OffscreenCanvas | null = null;
 let buffer: OffscreenCanvas | null = null;
+const workerScope = self as unknown as { postMessage(message: unknown, transfer?: Transferable[]): void };
 
 self.addEventListener('message', (event: MessageEvent<FromMainToWorkerEvent>) => {
-  switch (event.data.type) {
+  try {
+    switch (event.data.type) {
     case 'initialize': {
       present = event.data.present;
       buffer = event.data.buffer;
@@ -46,26 +48,36 @@ self.addEventListener('message', (event: MessageEvent<FromMainToWorkerEvent>) =>
       break;
     }
     case 'render': {
-      if (present == null) { break; }
-      if (buffer == null) { break; }
-
       const { state, tokens, info, option } = event.data;
+      if (present == null || buffer == null) {
+        for (const token of tokens) {
+          if (token.tag !== 'Bitmap') { continue; }
+          token.normal_bitmap.close();
+          token.flashing_bitmap?.close();
+        }
+        break;
+      }
       render(present, buffer, state, tokens, info, option);
 
       break;
     }
     case 'imagebitmap': {
-      if (present == null) { break; }
+      if (present == null) {
+        self.postMessage(FromWorkerToMainEventImageBitmap.from());
+        break;
+      }
 
       createImageBitmap(present).then((bitmap) => {
-        self.postMessage(FromWorkerToMainEventImageBitmap.from(bitmap));
-      });
+        workerScope.postMessage(FromWorkerToMainEventImageBitmap.from(bitmap), [bitmap]);
+      }).catch((error) => self.postMessage(FromWorkerToMainEventError.from(error)));
 
       break;
     }
     default: {
       throw new ExhaustivenessError(event.data, `Exhaustive check failed in CanvasRenderingWorker`);
     }
+    }
+  } catch (error) {
+    self.postMessage(FromWorkerToMainEventError.from(error));
   }
 });
-
