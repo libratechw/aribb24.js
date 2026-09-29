@@ -5,6 +5,22 @@ import EventEmitter from "./eventemitter";
 import { Event, EventType, BuiltinSound } from "./events";
 
 type Presentation = NonNullable<ReturnType<ARIBB24Feeder['content']>>;
+type PaintedCue = { source: Presentation; snapshot: Presentation; ownsSnapshot: boolean };
+
+const rememberCue = (source: Presentation): PaintedCue => {
+  // Text tokens are immutable after decoding. Copy only bitmap presentations:
+  // the feeder closes their ImageBitmaps when a same-PTS cue is replaced.
+  const ownsSnapshot = source.data.some((token) => token.tag === 'Bitmap');
+  return { source, snapshot: ownsSnapshot ? structuredClone(source) : source, ownsSnapshot };
+};
+
+const closeSnapshot = (cue: Presentation): void => {
+  for (const token of cue.data) {
+    if (token.tag !== 'Bitmap') { continue; }
+    token.normal_bitmap.close();
+    token.flashing_bitmap?.close();
+  }
+};
 
 const hasImmediateClear = (cue: Presentation): boolean => {
   let elapsed = cue.state.elapsed_time;
@@ -42,9 +58,9 @@ export default class Controller {
   private renderers: ARIBB24Renderer[] = [];
   private privious_pts: number | null = null;
   private lastPaintedCue: ReturnType<ARIBB24Feeder['content']> = null;
-  // Appended statements must be replayed together when a renderer is resized
-  // or replaced. The feeder owns these presentations until seek/detach.
-  private paintedCues: Presentation[] = [];
+  // Repaint copies belong to the controller: a feeder may close the bitmap of
+  // a replaced presentation before a renderer is resized.
+  private paintedCues: PaintedCue[] = [];
   private pendingSoundCuePts: number | null = null;
   private needsRepaint: Set<ARIBB24Renderer> = new Set();
   // Feeder
@@ -71,6 +87,8 @@ export default class Controller {
       this.renderers.forEach((renderer) => renderer.onAttach(this.container!));
     }
     this.feeder?.prepare(this.media.currentTime, this.bufferedStart(this.media.currentTime));
+    // Reconcile captions replaced while no media element was attached.
+    this.refreshPaintedCues(this.paintedCues.map(({ source }) => source.pts));
     this.setupHandlers();
   }
 
@@ -204,10 +222,16 @@ export default class Controller {
     if (this.media?.paused) { this.onPresentationChanged(); }
   }
 
-  private onPresentationChanged() {
+  private onPresentationChanged(changedPts?: readonly number[]) {
     if (!this.media || this.media.seeking) { return; }
     const currentTime = this.media.currentTime;
     const current = this.feeder?.content(currentTime, this.bufferedStart(currentTime)) ?? null;
+    if (changedPts != null && this.refreshPaintedCues(changedPts.filter((pts) => current == null || pts < current.pts)) &&
+        current === this.lastPaintedCue) {
+      if (this.isShowing) { this.paint(true); }
+      else { this.renderers.forEach((renderer) => this.needsRepaint.add(renderer)); }
+      return;
+    }
     // The decoder may notify us about an older cue or repeat a feeder scan.
     // Repainting the same presentation appends its glyphs a second time.
     if (current != null && currentTime < current.pts + current.duration &&
@@ -320,6 +344,45 @@ export default class Controller {
     this.unregisterRenderingLoop();
   }
 
+  private releasePaintedCues(): void {
+    this.paintedCues.forEach(({ snapshot, ownsSnapshot }) => {
+      if (ownsSnapshot) { closeSnapshot(snapshot); }
+    });
+    this.paintedCues = [];
+  }
+
+  private refreshPaintedCues(changedPts: readonly number[]): boolean {
+    if (this.feeder == null || this.paintedCues.length === 0 || changedPts.length === 0) { return false; }
+    let changed = false;
+    const refreshed: PaintedCue[] = [];
+    for (const painted of this.paintedCues) {
+      if (!changedPts.includes(painted.source.pts)) {
+        refreshed.push(painted);
+        continue;
+      }
+      const source = this.feeder.content(painted.source.pts);
+      if (source === painted.source) {
+        refreshed.push(painted);
+        continue;
+      }
+      changed = true;
+      if (painted.ownsSnapshot) { closeSnapshot(painted.snapshot); }
+      if (source != null && source.pts === painted.source.pts) {
+        refreshed.push(rememberCue(source));
+      }
+    }
+    if (changed) {
+      const lastClear = refreshed.findLastIndex(({ source }) => hasImmediateClear(source));
+      if (lastClear > 0) {
+        refreshed.slice(0, lastClear).forEach(({ snapshot, ownsSnapshot }) => {
+          if (ownsSnapshot) { closeSnapshot(snapshot); }
+        });
+      }
+      this.paintedCues = refreshed.slice(Math.max(0, lastClear));
+    }
+    return changed;
+  }
+
   private paint(repaint: boolean, renderers: ARIBB24Renderer[] = this.renderers) {
     // precondition
     if (!this.media) { return; }
@@ -331,20 +394,23 @@ export default class Controller {
       // paint
       if (current == null || currentTime >= current.pts + current.duration) {
         renderers.forEach((renderer) => renderer.clear());
-        if (renderers === this.renderers) { this.paintedCues = []; }
+        if (renderers === this.renderers) { this.releasePaintedCues(); }
       } else {
         // A renderer may consume and close bitmap tokens. Each renderer must
         // own its copy, including during a resize repaint.
         const existingPicture = current === this.lastPaintedCue &&
           this.privious_pts === current.pts && this.paintedCues.length > 0;
-        const picture = existingPicture ? this.paintedCues : [current];
+        const picture = existingPicture ? this.paintedCues.map(({ snapshot }) => snapshot) : [current];
         renderers.forEach((renderer) => {
           renderer.clear();
           for (const cue of picture) {
             renderer.render(structuredClone(cue.state), structuredClone(cue.data), structuredClone(cue.info));
           }
         });
-        if (renderers === this.renderers && !existingPicture) { this.paintedCues = [current]; }
+        if (renderers === this.renderers && !existingPicture) {
+          this.releasePaintedCues();
+          this.paintedCues = [rememberCue(current)];
+        }
       }
 
       if (renderers === this.renderers) {
@@ -370,7 +436,7 @@ export default class Controller {
       this.renderers.forEach((renderer) => renderer.clear());
       this.privious_pts = null;
       this.lastPaintedCue = null;
-      this.paintedCues = [];
+      this.releasePaintedCues();
       this.pendingSoundCuePts = null;
     } else if (currentTime >= current.pts + current.duration) { // cue duration expired, clear
       const end = current.pts + current.duration;
@@ -378,7 +444,7 @@ export default class Controller {
       this.renderers.forEach((renderer) => renderer.clear());
       this.privious_pts = end; // end is finite
       this.lastPaintedCue = null;
-      this.paintedCues = [];
+      this.releasePaintedCues();
       this.pendingSoundCuePts = null;
     } else { // render
       if (this.privious_pts === current.pts) {
@@ -391,8 +457,8 @@ export default class Controller {
       this.renderers.forEach((renderer) => renderer.render(structuredClone(current.state), structuredClone(current.data), structuredClone(current.info)));
       this.privious_pts = current.pts
       this.lastPaintedCue = current;
-      if (hasImmediateClear(current)) { this.paintedCues = []; }
-      this.paintedCues.push(current);
+      if (hasImmediateClear(current)) { this.releasePaintedCues(); }
+      this.paintedCues.push(rememberCue(current));
       if (this.media.paused) {
         this.pendingSoundCuePts = current.pts;
       } else {
@@ -414,7 +480,7 @@ export default class Controller {
     // clear privious information
     this.privious_pts = null;
     this.lastPaintedCue = null;
-    this.paintedCues = [];
+    this.releasePaintedCues();
     this.pendingSoundCuePts = null;
   }
 

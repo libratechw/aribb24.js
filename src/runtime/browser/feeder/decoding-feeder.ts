@@ -13,7 +13,10 @@ type DecodingOrderedKey = {
   lang?: number;
 };
 
-type QueuedDecodingData = FeederDecodingData & { key: string };
+type QueuedDecodingData = FeederDecodingData & { key: string; packet: Uint8Array };
+
+const samePacket = (a: Uint8Array, b: Uint8Array): boolean =>
+  a.length === b.length && a.every((byte, index) => byte === b[index]);
 
 // Caption packets can precede the first buffered video frame of a seek by a
 // small amount. Keep that pre-roll without replaying a distant old range.
@@ -54,27 +57,33 @@ export default abstract class DecodingFeeder implements Feeder {
   private pendingReplayWindow = false;
   private decoderBuffer: QueuedDecodingData[] = [];
   private awaitingManagement: QueuedDecodingData[] = [];
-  private notified: Set<string> = new Set();
+  private notified: Map<string, QueuedDecodingData> = new Map();
   private decodingPromise: Promise<void>;
   private decodingNotify: (() => void) = Promise.resolve;
   private abortController: AbortController = new AbortController();
   private present: AVLTree<number, FeederPresentationData> = new AVLTree<number, FeederPresentationData>(compareNumber, compareNumber, (pts) => pts);
   private isDestroyed: boolean = false;
   private generation: number = 0;
-  private presentationChangeHandler: (() => void) | null = null;
+  private presentationChangeHandler: ((changedPts?: readonly number[]) => void) | null = null;
   private presentationChangeQueued = false;
+  private changedPresentationPts: Set<number> = new Set();
 
-  public setPresentationChangeHandler(handler: (() => void) | null): void {
+  public setPresentationChangeHandler(handler: ((changedPts?: readonly number[]) => void) | null): void {
     this.presentationChangeHandler = handler;
+    if (handler == null) { this.changedPresentationPts.clear(); }
   }
 
-  protected notifyPresentationChange(): void {
-    if (this.presentationChangeHandler == null || this.presentationChangeQueued) { return; }
+  protected notifyPresentationChange(pts?: number): void {
+    if (this.presentationChangeHandler == null) { return; }
+    if (pts !== undefined) { this.changedPresentationPts.add(pts); }
+    if (this.presentationChangeQueued) { return; }
     this.presentationChangeQueued = true;
     // A renderer failure must surface without terminating the decoder pump.
     queueMicrotask(() => {
       this.presentationChangeQueued = false;
-      this.presentationChangeHandler?.();
+      const changed = [...this.changedPresentationPts];
+      this.changedPresentationPts.clear();
+      this.presentationChangeHandler?.(changed);
     });
   }
 
@@ -88,7 +97,7 @@ export default abstract class DecodingFeeder implements Feeder {
 
   private notify(segment: QueuedDecodingData | null): void {
     if (segment != null) {
-      this.notified.add(segment.key);
+      this.notified.set(segment.key, segment);
       this.decoderBuffer.push(segment);
     } else {
       // Clear the old generation before a post-seek cue can enter the buffer.
@@ -213,7 +222,7 @@ export default abstract class DecodingFeeder implements Feeder {
     const previous = this.present.get(pts);
     if (previous != null) { closeValueImageBitmap(previous); }
     this.present.insert(pts, value);
-    this.notifyPresentationChange();
+    this.notifyPresentationChange(pts);
   }
 
   protected feed(data: Uint8Array, pts: number, dts: number) {
@@ -229,8 +238,15 @@ export default abstract class DecodingFeeder implements Feeder {
     pts += this.option.offset.time;
     dts += this.option.offset.time;
     const keyString = `${dts}:${lang}`;
-    const segment = { pts, caption, key: keyString };
+    const segment = { pts, caption, key: keyString, packet: data.slice() };
     const key = { dts, lang };
+    const previous = this.decoder.get(key);
+    if (previous?.pts === pts && samePacket(previous.packet, data)) {
+      if (this.notified.get(keyString) !== previous && this.priviousTime !== null && dts <= this.priviousTime) {
+        this.notify(previous);
+      }
+      return;
+    }
     this.decoder.insert(key, segment);
     if (caption.tag === 'CaptionManagement') {
       this.managementTimes.insert(dts, dts);
@@ -238,7 +254,7 @@ export default abstract class DecodingFeeder implements Feeder {
     // A native HLS metadata cue can arrive after content() has advanced past
     // its DTS. Keep it in the tree for later seeks, but decode it now as well.
     // A paused media clock may not call content() again after an equal-DTS cue arrives.
-    if (!this.notified.has(keyString) && this.priviousTime !== null && dts <= this.priviousTime) {
+    if (this.notified.get(keyString) !== segment && this.priviousTime !== null && dts <= this.priviousTime) {
       this.notify(segment);
     }
   }
@@ -281,7 +297,7 @@ export default abstract class DecodingFeeder implements Feeder {
     }
     if (this.priviousTime != null) {
       for (const segment of this.decoder.range(this.priviousTime, time)) {
-        if (!this.notified.has(segment.key)) { this.notify(segment); }
+        if (this.notified.get(segment.key) !== segment) { this.notify(segment); }
       }
     }
     this.pendingReplayWindow = false;
