@@ -150,13 +150,16 @@ export default abstract class DecodingFeeder implements Feeder {
           });
           // HLS metadata with the same timestamp can arrive out of order.
           // Retry a statement only after its management packet is installed.
+          const stillAwaiting: QueuedDecodingData[] = [];
           for (const pending of this.awaitingManagement) {
             if (pending.caption.tag === 'CaptionStatement' &&
                 pending.caption.group === caption.group && pending.pts >= pts) {
               this.notify(pending);
+            } else if (pending.caption.group !== caption.group) {
+              stillAwaiting.push(pending);
             }
           }
-          this.awaitingManagement = [];
+          this.awaitingManagement = stillAwaiting;
           continue;
         }
 

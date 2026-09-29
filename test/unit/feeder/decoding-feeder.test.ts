@@ -94,6 +94,35 @@ describe('DecodingFeeder late metadata', () => {
     }
   });
 
+  test('keeps a pending statement when another management group arrives first', async () => {
+    const baseManagement = {
+      ...management,
+      languages: [{ lang: 0, displayMode: 0b0101, iso_639_language_code: 'jpn',
+        format: 7, rollup: RollupModeType.NOT_ROLLUP, TCS: 0b00 }],
+    } as const satisfies ARIBB24CaptionData;
+    const nextManagement = { ...baseManagement, group: 1 as const };
+    const statement = {
+      tag: 'CaptionStatement', group: 1, lang: 0,
+      timeControlMode: TimeControlModeType.FREE, units: [],
+    } as const satisfies ARIBB24CaptionData;
+    const makePacket = (caption: ARIBB24CaptionData) =>
+      new Uint8Array([0x80, 0, 0, ...new Uint8Array(mux(caption))]);
+    const feeder = new MPEGTSFeeder();
+    try {
+      feeder.prepare(2);
+      feeder.content(3);
+      feeder.feedB24(makePacket(statement), 2.2);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      feeder.feedB24(makePacket(baseManagement), 2);
+      await vi.waitFor(() => expect(feeder.content(3)?.pts).toBe(2));
+      feeder.feedB24(makePacket(nextManagement), 2.1);
+      await vi.waitFor(() => expect(feeder.content(3)?.pts).toBe(2.2));
+      expect(feeder.content(3)?.data).toEqual([]);
+    } finally {
+      feeder.destroy();
+    }
+  });
+
   test('keeps normal in-order data on the time-based path', async () => {
     const feeder = new MPEGTSFeeder();
     try {
