@@ -4,6 +4,17 @@ import { ControllerOption } from "./controller-option";
 import EventEmitter from "./eventemitter";
 import { Event, EventType, BuiltinSound } from "./events";
 
+type Presentation = NonNullable<ReturnType<ARIBB24Feeder['content']>>;
+
+const hasImmediateClear = (cue: Presentation): boolean => {
+  let elapsed = cue.state.elapsed_time;
+  for (const token of cue.data) {
+    if (token.tag === 'TimeControlWait') { elapsed += token.seconds; }
+    if (token.tag === 'ClearScreen' && elapsed === 0) { return true; }
+  }
+  return false;
+};
+
 export default class Controller {
   // Option
   private option: ControllerOption;
@@ -31,6 +42,9 @@ export default class Controller {
   private renderers: ARIBB24Renderer[] = [];
   private privious_pts: number | null = null;
   private lastPaintedCue: ReturnType<ARIBB24Feeder['content']> = null;
+  // Appended statements must be replayed together when a renderer is resized
+  // or replaced. The feeder owns these presentations until seek/detach.
+  private paintedCues: Presentation[] = [];
   private pendingSoundCuePts: number | null = null;
   private needsRepaint: Set<ARIBB24Renderer> = new Set();
   // Feeder
@@ -119,6 +133,7 @@ export default class Controller {
     this.feeder?.setPresentationChangeHandler?.(null);
     this.feeder?.onDetach();
     this.feeder = null;
+    this.clear();
   }
 
   public attachRenderer(renderer: ARIBB24Renderer) {
@@ -316,13 +331,20 @@ export default class Controller {
       // paint
       if (current == null || currentTime >= current.pts + current.duration) {
         renderers.forEach((renderer) => renderer.clear());
+        if (renderers === this.renderers) { this.paintedCues = []; }
       } else {
         // A renderer may consume and close bitmap tokens. Each renderer must
         // own its copy, including during a resize repaint.
+        const existingPicture = current === this.lastPaintedCue &&
+          this.privious_pts === current.pts && this.paintedCues.length > 0;
+        const picture = existingPicture ? this.paintedCues : [current];
         renderers.forEach((renderer) => {
           renderer.clear();
-          renderer.render(structuredClone(current.state), structuredClone(current.data), structuredClone(current.info));
+          for (const cue of picture) {
+            renderer.render(structuredClone(cue.state), structuredClone(cue.data), structuredClone(cue.info));
+          }
         });
+        if (renderers === this.renderers && !existingPicture) { this.paintedCues = [current]; }
       }
 
       if (renderers === this.renderers) {
@@ -348,6 +370,7 @@ export default class Controller {
       this.renderers.forEach((renderer) => renderer.clear());
       this.privious_pts = null;
       this.lastPaintedCue = null;
+      this.paintedCues = [];
       this.pendingSoundCuePts = null;
     } else if (currentTime >= current.pts + current.duration) { // cue duration expired, clear
       const end = current.pts + current.duration;
@@ -355,6 +378,7 @@ export default class Controller {
       this.renderers.forEach((renderer) => renderer.clear());
       this.privious_pts = end; // end is finite
       this.lastPaintedCue = null;
+      this.paintedCues = [];
       this.pendingSoundCuePts = null;
     } else { // render
       if (this.privious_pts === current.pts) {
@@ -367,6 +391,8 @@ export default class Controller {
       this.renderers.forEach((renderer) => renderer.render(structuredClone(current.state), structuredClone(current.data), structuredClone(current.info)));
       this.privious_pts = current.pts
       this.lastPaintedCue = current;
+      if (hasImmediateClear(current)) { this.paintedCues = []; }
+      this.paintedCues.push(current);
       if (this.media.paused) {
         this.pendingSoundCuePts = current.pts;
       } else {
@@ -388,6 +414,7 @@ export default class Controller {
     // clear privious information
     this.privious_pts = null;
     this.lastPaintedCue = null;
+    this.paintedCues = [];
     this.pendingSoundCuePts = null;
   }
 

@@ -4,7 +4,7 @@ import Controller from '@/runtime/browser/controller/controller';
 import { EventType } from '@/runtime/browser/controller/events';
 import type Feeder from '@/runtime/browser/feeder/feeder';
 import type Renderer from '@/runtime/browser/renderer/renderer';
-import { ARIBB24BuiltinSoundReplayToken, ARIBB24CharacterToken } from '@/lib/tokenizer/token';
+import { ARIBB24BuiltinSoundReplayToken, ARIBB24CharacterToken, ARIBB24ClearScreenToken } from '@/lib/tokenizer/token';
 import aribInitialState from '@/lib/parser/state/ARIB';
 import TextRenderer from '@/runtime/browser/renderer/text/text-renderer';
 
@@ -261,6 +261,64 @@ describe('Controller visibility and rendering loop', () => {
     controller.detachMedia();
     controller.detachFeeder();
     feeder.destroy();
+  });
+
+  test('retains built-up lines when the caption container changes size', () => {
+    let resize!: ResizeObserverCallback;
+    vi.stubGlobal('devicePixelRatio', 1);
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: ResizeObserverCallback) { resize = callback; }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    const container = {} as HTMLElement;
+    const media = Object.assign(new EventTarget(), {
+      currentTime: 1, paused: true, seeking: false, parentElement: container,
+      buffered: { length: 1, start: () => 0, end: () => 3 } as TimeRanges,
+    }) as HTMLVideoElement;
+    let cue: NonNullable<ReturnType<Feeder['content']>> = { pts: 1, duration: 2, state: aribInitialState,
+      data: [ARIBB24CharacterToken.from('あ')], info: { association: 'ARIB' as const, language: 'jpn' } };
+    let changed: (() => void) | null = null;
+    const feeder = {
+      prepare() {}, content: () => cue, clear() {}, destroy() {}, onAttach() {}, onDetach() {},
+      onSeeking() {}, onSeeked() {},
+      setPresentationChangeHandler: (handler: (() => void) | null) => { changed = handler; },
+    } as unknown as Feeder;
+    const text = new TextRenderer();
+    const renderer = {
+      render: text.render.bind(text), clear: text.clear.bind(text),
+      hide() {}, show() {}, destroy() {}, onAttach() {}, onDetach() {},
+      onContainerResize: () => { text.clear(); return true; },
+      onVideoResize: () => false, onPlay() {}, onPause() {}, onSeeking() {},
+    } satisfies Renderer;
+    const controller = new Controller();
+    controller.attachRenderer(renderer);
+    controller.attachFeeder(feeder);
+    controller.attachMedia(media);
+    media.dispatchEvent(new Event('seeked'));
+    media.currentTime = 2;
+    cue = { ...cue, pts: 2, data: [ARIBB24CharacterToken.from('い')] };
+    changed?.();
+    expect(text.getText()).toBe('あい');
+
+    resize([{ target: container, devicePixelContentBoxSize: [{ inlineSize: 640, blockSize: 360 }] } as unknown as ResizeObserverEntry], {} as ResizeObserver);
+    expect(text.getText()).toBe('あい');
+
+    cue = { ...cue, data: [ARIBB24CharacterToken.from('う')] };
+    changed?.();
+    expect(text.getText()).toBe('う');
+    resize([{ target: container, devicePixelContentBoxSize: [{ inlineSize: 800, blockSize: 450 }] } as unknown as ResizeObserverEntry], {} as ResizeObserver);
+    expect(text.getText()).toBe('う');
+
+    media.currentTime = 2.5;
+    cue = { ...cue, pts: 2.5, data: [ARIBB24ClearScreenToken.from(), ARIBB24CharacterToken.from('え')] };
+    changed?.();
+    expect(text.getText()).toBe('え');
+    resize([{ target: container, devicePixelContentBoxSize: [{ inlineSize: 960, blockSize: 540 }] } as unknown as ResizeObserverEntry], {} as ResizeObserver);
+    expect(text.getText()).toBe('え');
+    controller.detachMedia();
+    controller.detachFeeder();
   });
 
   test('retains built-up lines when a cue arrives during a hidden pause', () => {
