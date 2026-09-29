@@ -2,11 +2,71 @@ import { afterEach, expect, test, vi } from 'vitest';
 
 import Controller from '@/runtime/browser/controller/controller';
 import HLSFeeder from '@/runtime/browser/feeder/hls-feeder';
+import MPEGTSFeeder from '@/runtime/browser/feeder/mpegts-feeder';
 import type Renderer from '@/runtime/browser/renderer/renderer';
 import mux from '@/lib/muxer/b24/datagroup';
 import { ARIBB24CaptionData, RollupModeType, TimeControlModeType } from '@/lib/demuxer/b24/datagroup';
 
 afterEach(() => vi.unstubAllGlobals());
+
+test('repaints a paused MPEG-TS seek when the target becomes buffered later', async () => {
+  vi.stubGlobal('requestAnimationFrame', () => 1);
+  vi.stubGlobal('cancelAnimationFrame', () => {});
+  vi.stubGlobal('ResizeObserver', class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  });
+  const management = {
+    tag: 'CaptionManagement', group: 0, timeControlMode: TimeControlModeType.FREE,
+    languages: [{ lang: 0, displayMode: 0b0101, iso_639_language_code: 'jpn',
+      format: 7, rollup: RollupModeType.NOT_ROLLUP, TCS: 0b00 }], units: [],
+  } as const satisfies ARIBB24CaptionData;
+  const statement = {
+    tag: 'CaptionStatement', group: 0, lang: 0,
+    timeControlMode: TimeControlModeType.FREE, units: [],
+  } as const satisfies ARIBB24CaptionData;
+  const packet = (caption: ARIBB24CaptionData) => new Uint8Array([
+    0x80, 0, 0, ...new Uint8Array(mux(caption)),
+  ]);
+  let ranges = [[0, 4]];
+  const mediaElement = Object.assign(new EventTarget(), {
+    currentTime: 1000, paused: true, seeking: false, parentElement: {} as HTMLElement,
+    buffered: {
+      get length() { return ranges.length; },
+      start: (index: number) => ranges[index][0],
+      end: (index: number) => ranges[index][1],
+    } as TimeRanges,
+  });
+  const media = mediaElement as HTMLVideoElement;
+  const render = vi.fn();
+  const renderer = {
+    render, clear: vi.fn(), hide: vi.fn(), show: vi.fn(), destroy: vi.fn(),
+    onAttach: vi.fn(), onDetach: vi.fn(), onContainerResize: vi.fn(() => false),
+    onVideoResize: vi.fn(() => false), onPlay: vi.fn(), onPause: vi.fn(), onSeeking: vi.fn(),
+  } satisfies Renderer;
+  const feeder = new MPEGTSFeeder();
+  const controller = new Controller();
+  try {
+    controller.attachFeeder(feeder);
+    controller.attachRenderer(renderer);
+    controller.attachMedia(media);
+    media.dispatchEvent(new Event('seeking'));
+    media.dispatchEvent(new Event('seeked'));
+    feeder.feedB24(packet(management), 998.8);
+    feeder.feedB24(packet(statement), 999.5);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(render).not.toHaveBeenCalled();
+    ranges = [[0, 4], [999, 1002]];
+    media.dispatchEvent(new Event('progress'));
+    await vi.waitFor(() => expect(render).toHaveBeenCalled());
+    expect(feeder.content(1000, 999)?.pts).toBe(999.5);
+  } finally {
+    controller.detachMedia();
+    controller.detachFeeder();
+    feeder.destroy();
+  }
+});
 
 test.each([1, 1.5])('decodes and repaints a buffered HLS cue after play, pause and seek to %s', async (seekTime) => {
   const pending = new Map<number, FrameRequestCallback>();

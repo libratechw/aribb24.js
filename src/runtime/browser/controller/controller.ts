@@ -10,6 +10,7 @@ export default class Controller {
   // Video
   private media: HTMLVideoElement | null = null;
   private container: HTMLElement | null = null;
+  private containerSize: { width: number; height: number } | null = null;
   // Container Resize Handler
   private readonly onContainerResizeHandler = this.onContainerResize.bind(this);
   private resize_observer: ResizeObserver | null = null;
@@ -22,6 +23,7 @@ export default class Controller {
   private readonly onSeekingHandler = this.onSeeking.bind(this);
   private readonly onSeekedHandler = this.onSeeked.bind(this);
   private readonly onPresentationChangedHandler = this.onPresentationChanged.bind(this);
+  private readonly onBufferedProgressHandler = this.onBufferedProgress.bind(this);
   // Play/Pause Handler
   private readonly onPlayHandler = this.onPlay.bind(this);
   private readonly onPauseHandler = this.onPause.bind(this);
@@ -50,6 +52,7 @@ export default class Controller {
     }
     this.media = media;
     this.container = container ?? media.parentElement!;
+    this.containerSize = null;
     if (this.container) {
       this.renderers.forEach((renderer) => renderer.onAttach(this.container!));
     }
@@ -63,6 +66,7 @@ export default class Controller {
     }
     this.cleanupHandlers()
     this.media = this.container = null
+    this.containerSize = null;
   }
 
   private setupHandlers() {
@@ -71,6 +75,8 @@ export default class Controller {
     // setup media handler
     this.media.addEventListener('seeking', this.onSeekingHandler);
     this.media.addEventListener('seeked', this.onSeekedHandler);
+    this.media.addEventListener('progress', this.onBufferedProgressHandler);
+    this.media.addEventListener('canplay', this.onBufferedProgressHandler);
     this.media.addEventListener('resize', this.onVideoResizeHandler);
     this.media.addEventListener('play', this.onPlayHandler);
     this.media.addEventListener('pause', this.onPauseHandler);
@@ -84,6 +90,8 @@ export default class Controller {
     // cleanup media seeking handler
     this.media?.removeEventListener('seeking', this.onSeekingHandler);
     this.media?.removeEventListener('seeked', this.onSeekedHandler);
+    this.media?.removeEventListener('progress', this.onBufferedProgressHandler);
+    this.media?.removeEventListener('canplay', this.onBufferedProgressHandler);
     this.media?.removeEventListener('resize', this.onVideoResizeHandler);
     this.media?.removeEventListener('play', this.onPlayHandler);
     this.media?.removeEventListener('pause', this.onPauseHandler);
@@ -118,6 +126,17 @@ export default class Controller {
     this.renderers.push(renderer);
     if (this.container) {
       renderer.onAttach(this.container);
+    }
+    if (this.media) {
+      if (this.containerSize) {
+        renderer.onContainerResize(this.containerSize.width, this.containerSize.height);
+      }
+      if (this.media.videoWidth > 0 && this.media.videoHeight > 0) {
+        renderer.onVideoResize(this.media.videoWidth, this.media.videoHeight);
+      }
+      if (this.isShowing) {
+        this.paint(true, [renderer]);
+      }
     }
     // A renderer replacing one invalidated while hidden must receive the
     // current presentation when captions are shown again.
@@ -162,6 +181,12 @@ export default class Controller {
     } else {
       this.renderers.forEach((renderer) => this.needsRepaint.add(renderer));
     }
+  }
+
+  private onBufferedProgress() {
+    // A paused seek may become buffered only after seeked fired. MPEG-TS has
+    // no metadata-track rescan to wake the decoder at that point.
+    if (this.media?.paused) { this.onPresentationChanged(); }
   }
 
   private onPresentationChanged() {
@@ -210,6 +235,7 @@ export default class Controller {
     const width = target.devicePixelContentBoxSize != null ? target.devicePixelContentBoxSize[0].inlineSize : Math.floor(target.contentBoxSize[0].inlineSize * devicePixelRatio);
     const height = target.devicePixelContentBoxSize != null ? target.devicePixelContentBoxSize[0].blockSize : Math.floor(target.contentBoxSize[0].blockSize * devicePixelRatio);
     if (width <= 0 || height <= 0) { return; }
+    this.containerSize = { width, height };
 
     const resized: ARIBB24Renderer[] = [];
     this.renderers.forEach((renderer) => {
