@@ -119,6 +119,9 @@ export default class Controller {
     if (this.container) {
       renderer.onAttach(this.container);
     }
+    // A renderer replacing one invalidated while hidden must receive the
+    // current presentation when captions are shown again.
+    if (this.media && !this.isShowing) { this.needsRepaint.add(renderer); }
   }
 
   public detachRenderer(renderer: ARIBB24Renderer) {

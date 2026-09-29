@@ -11,6 +11,52 @@ import TextRenderer from '@/runtime/browser/renderer/text/text-renderer';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Controller visibility and rendering loop', () => {
+  test('repaints a replacement renderer attached while captions are hidden after resize', () => {
+    let resize!: ResizeObserverCallback;
+    vi.stubGlobal('requestAnimationFrame', () => 1);
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: ResizeObserverCallback) { resize = callback; }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    const container = {} as HTMLElement;
+    const media = Object.assign(new EventTarget(), {
+      currentTime: 1, paused: true, seeking: false, parentElement: container,
+      buffered: { length: 1, start: () => 0, end: () => 2 } as TimeRanges,
+    }) as HTMLVideoElement;
+    const cue = { pts: 1, duration: 1, state: aribInitialState,
+      data: [ARIBB24CharacterToken.from('あ')], info: { association: 'ARIB' as const, language: 'jpn' } };
+    const feeder = {
+      prepare() {}, content: () => cue, clear() {}, destroy() {}, onAttach() {}, onDetach() {},
+      onSeeking() {}, onSeeked() {},
+    } as unknown as Feeder;
+    const makeRenderer = () => ({
+      render: vi.fn(), clear: vi.fn(), hide: vi.fn(), show: vi.fn(), destroy: vi.fn(),
+      onAttach: vi.fn(), onDetach: vi.fn(), onContainerResize: vi.fn(() => true),
+      onVideoResize: vi.fn(() => false), onPlay: vi.fn(), onPause: vi.fn(), onSeeking: vi.fn(),
+    } satisfies Renderer);
+    const observer = makeRenderer();
+    const oldWorker = makeRenderer();
+    const replacement = makeRenderer();
+    const controller = new Controller();
+    controller.attachRenderer(observer);
+    controller.attachRenderer(oldWorker);
+    controller.attachFeeder(feeder);
+    controller.attachMedia(media);
+    media.dispatchEvent(new Event('seeked'));
+    controller.hide();
+    resize([{target: container, devicePixelContentBoxSize: [{inlineSize: 100, blockSize: 50}]} as unknown as ResizeObserverEntry], {} as ResizeObserver);
+    controller.detachRenderer(oldWorker);
+    controller.attachRenderer(replacement);
+    controller.show();
+    expect(replacement.render).toHaveBeenCalledTimes(1);
+    controller.hide();
+    controller.detachMedia();
+    controller.detachFeeder();
+  });
+
   test.each([false, true])('does not replay sound after a same-time update (hidden=%s)', (hidden) => {
     const pending = new Map<number, FrameRequestCallback>();
     let nextId = 1;
