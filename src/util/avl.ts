@@ -194,6 +194,7 @@ class AVLTreeNode<K, V, O = K> implements AVLTreeNodeInterface<K, V, O> {
 
   private find(key: K, algorithm: 'exact' | 'floor' | 'ceil' = 'exact'): AVLTreeNode<K, V, O> | null {
     let node: AVLTreeNode<K, V, O> = this;
+    let candidate: AVLTreeNode<K, V, O> | null = null;
 
     FIND:
     while (true) {
@@ -202,21 +203,19 @@ class AVLTreeNode<K, V, O = K> implements AVLTreeNodeInterface<K, V, O> {
         case 0:
           return node;
         case -1:
+          if (algorithm === 'ceil') { candidate = node; }
           if (node.left != null) {
             node = node.left;
             continue FIND;
-          } else if (algorithm === 'ceil') {
-            return node;
           }
-          return null;
+          return candidate;
         case 1:
+          if (algorithm === 'floor') { candidate = node; }
           if (node.right != null) {
             node = node.right;
             continue FIND;
-          } else if (algorithm === 'floor') {
-            return node;
           }
-          return null;
+          return candidate;
         default:
           throw new ExhaustivenessError(compare, `Exhaustive check reached!`);
       }
@@ -337,8 +336,8 @@ class AVLTreeNode<K, V, O = K> implements AVLTreeNodeInterface<K, V, O> {
     const t = this.compareOrder(to, this.order);
 
     if (f <= 0) { yield* (this.left?.range(from, to) ?? []); }
-    if (f <= 0 && t > 0){ yield this.value; }
-    if (t > 0) { yield* (this.right?.range(from, to) ?? []); }
+    if (f <= 0 && t >= 0){ yield this.value; }
+    if (t >= 0) { yield* (this.right?.range(from, to) ?? []); }
   }
 }
 
