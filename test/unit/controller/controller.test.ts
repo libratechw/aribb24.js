@@ -313,9 +313,9 @@ describe('Controller visibility and rendering loop', () => {
 
     cue = { ...cue, data: [ARIBB24CharacterToken.from('う')] };
     changed?.();
-    expect(text.getText()).toBe('う');
+    expect(text.getText()).toBe('あう');
     resize([{ target: container, devicePixelContentBoxSize: [{ inlineSize: 800, blockSize: 450 }] } as unknown as ResizeObserverEntry], {} as ResizeObserver);
-    expect(text.getText()).toBe('う');
+    expect(text.getText()).toBe('あう');
 
     media.currentTime = 2.5;
     cue = { ...cue, pts: 2.5, data: [ARIBB24ClearScreenToken.from(), ARIBB24CharacterToken.from('え')] };
