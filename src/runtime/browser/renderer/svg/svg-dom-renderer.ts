@@ -38,9 +38,17 @@ export default class SVGDOMRenderer implements Renderer {
     this.svg.style.visibility = 'visible';
   }
   public render(initialState: ARIBB24ParserState, tokens: ARIBB24BrowserToken[], info: CaptionAssociationInformation): void {
-    if (shouldNotAssumeUseClearScreen(info)) { this.clear(); }
-
-    render(this.svg, initialState, replaceDRCS(tokens, this.option.replace.drcs), info, this.option);
+    try {
+      if (shouldNotAssumeUseClearScreen(info)) { this.clear(); }
+      render(this.svg, initialState, replaceDRCS(tokens, this.option.replace.drcs), info, this.option);
+    } finally {
+      // SVG embeds the data URLs and does not retain the ImageBitmap copies.
+      for (const token of tokens) {
+        if (token.tag !== 'Bitmap') { continue; }
+        token.normal_bitmap.close();
+        token.flashing_bitmap?.close();
+      }
+    }
   }
 
   public onAttach(element: HTMLElement): void {
