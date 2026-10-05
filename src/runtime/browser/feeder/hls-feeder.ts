@@ -1,17 +1,23 @@
 import { PartialFeederOption } from './feeder';
 import { parseID3v2 } from '../../../util/id3';
 import { base64ToUint8Array } from '../../../util/binary';
-import DecodingFeeder from './decoding-feeder';
+import DecodingFeeder, { SEEK_BUFFER_PREROLL_SECONDS } from './decoding-feeder';
 
 export default class HLSFeeder extends DecodingFeeder {
+  // Shared by feeders from this module instance, not by separately loaded bundles.
+  private static readonly trackModeOwners = new WeakMap<TextTrack, { holders: number; previousMode: TextTrackMode }>();
   private media: HTMLMediaElement | null = null;
   private timer: number | null = null;
   private privious_time: number | null = null;
   private id3Tracks: TextTrack[] = [];
+  private fedCues: WeakSet<TextTrackCue> = new WeakSet();
+  private ownedTrackModes: Set<TextTrack> = new Set();
+  private cueSnapshots: Map<TextTrack, { length: number; first: TextTrackCue | null; last: TextTrackCue | null }> = new Map();
   private readonly onAddTrackHandler: ((event: TrackEvent) => void) = this.onAddTrack.bind(this);
   private readonly onRemoveTrackHandler: ((event: TrackEvent) => void) = this.onRemoveTrack.bind(this);
   private readonly onPlayHandler = this.onPlay.bind(this);
   private readonly onPauseHandler = this.onPause.bind(this);
+  private readonly onBufferProgressHandler = this.onBufferProgress.bind(this);
   private readonly introspectHandler = this.introspect.bind(this);
 
   public constructor(option?: PartialFeederOption) {
@@ -24,14 +30,18 @@ export default class HLSFeeder extends DecodingFeeder {
 
     this.setupHandlers();
     this.registerID3Track();
+    if (media.paused === false) { this.registerRenderingLoop(); }
   }
 
   public detachMedia(): void {
+    this.unregisterRenderingLoop();
     this.unregisterID3Track();
     this.cleanupHandlers();
 
     this.media = null
     this.privious_time = null;
+    this.fedCues = new WeakSet();
+    this.cueSnapshots.clear();
   }
 
   private static isID3Track(track: TextTrack): boolean {
@@ -55,6 +65,9 @@ export default class HLSFeeder extends DecodingFeeder {
     this.media.textTracks.addEventListener('removetrack', this.onRemoveTrackHandler);
     this.media.addEventListener('play', this.onPlayHandler);
     this.media.addEventListener('pause', this.onPauseHandler);
+    this.media.addEventListener('progress', this.onBufferProgressHandler);
+    this.media.addEventListener('loadeddata', this.onBufferProgressHandler);
+    this.media.addEventListener('canplay', this.onBufferProgressHandler);
   }
 
   private cleanupHandlers(): void {
@@ -64,10 +77,14 @@ export default class HLSFeeder extends DecodingFeeder {
     this.media.textTracks.removeEventListener('removetrack', this.onRemoveTrackHandler);
     this.media.removeEventListener('play', this.onPlayHandler);
     this.media.removeEventListener('pause', this.onPauseHandler);
+    this.media.removeEventListener('progress', this.onBufferProgressHandler);
+    this.media.removeEventListener('loadeddata', this.onBufferProgressHandler);
+    this.media.removeEventListener('canplay', this.onBufferProgressHandler);
   }
 
   public destroy(): void {
     this.detachMedia();
+    super.destroy();
   }
 
   private registerID3Track(): void {
@@ -75,52 +92,119 @@ export default class HLSFeeder extends DecodingFeeder {
 
     for (const track of Array.from(this.media.textTracks)) {
       if (!HLSFeeder.isID3Track(track)) { continue; }
+      this.enableID3Track(track);
       this.id3Tracks.push(track);
     }
   }
 
   private unregisterID3Track(): void {
+    for (const track of this.ownedTrackModes) {
+      this.restoreID3TrackMode(track);
+    }
     this.id3Tracks = [];
+    this.cueSnapshots.clear();
+  }
+
+  private enableID3Track(track: TextTrack): void {
+    // Safari does not expose in-band metadata cues while the track is disabled.
+    // Hidden keeps the cues available without painting them as browser subtitles.
+    if (track.inBandMetadataTrackDispatchType !== 'com.apple.streaming' || this.ownedTrackModes.has(track)) { return; }
+    const existingOwner = HLSFeeder.trackModeOwners.get(track);
+    if (existingOwner != null) {
+      existingOwner.holders++;
+      this.ownedTrackModes.add(track);
+      if (track.mode === 'disabled') { track.mode = 'hidden'; }
+      return;
+    }
+    if (track.mode !== 'disabled') { return; }
+    track.mode = 'hidden';
+    HLSFeeder.trackModeOwners.set(track, { holders: 1, previousMode: 'disabled' });
+    this.ownedTrackModes.add(track);
+  }
+
+  private restoreID3TrackMode(track: TextTrack): void {
+    if (!this.ownedTrackModes.delete(track)) { return; }
+    const owner = HLSFeeder.trackModeOwners.get(track)!;
+    owner.holders--;
+    if (owner.holders > 0) { return; }
+    HLSFeeder.trackModeOwners.delete(track);
+    // An external writer that also selects hidden cannot be distinguished here.
+    if (track.mode === 'hidden') { track.mode = owner.previousMode; }
   }
 
   private onAddTrack(event: TrackEvent): void {
     const track = event.track!;
     if (!HLSFeeder.isID3Track(track)) { return; }
 
+    this.enableID3Track(track);
     this.id3Tracks.push(track);
+    this.privious_time = null;
+    this.cueSnapshots.delete(track);
   }
 
   private onRemoveTrack(event: TrackEvent): void {
     const track = event.track!;
     if (!HLSFeeder.isID3Track(track)) { return; }
 
+    this.restoreID3TrackMode(track);
     this.id3Tracks = this.id3Tracks.filter((t) => t !== track);
+    this.cueSnapshots.delete(track);
+  }
+
+  private bufferedStart(time: number): number | null {
+    if (this.media == null || this.media.seeking) { return null; }
+    const ranges = this.media.buffered;
+    for (let index = 0; index < ranges.length; index++) {
+      if (ranges.start(index) <= time && time <= ranges.end(index)) {
+        return ranges.start(index);
+      }
+    }
+    return null;
   }
 
   private introspect(): void {
     this.registerRenderingLoop();
+    this.scanCurrentBuffer();
+  }
+
+  private scanCurrentBuffer(): void {
     if (this.media == null) { return; }
     const current_time = this.media.currentTime;
-
-    if (this.privious_time == null) {
-      this.privious_time = current_time;
+    const buffered_start = this.bufferedStart(current_time);
+    if (buffered_start == null) {
       return;
     }
+    if (this.privious_time != null && current_time < this.privious_time) {
+      super.onSeeking();
+      this.fedCues = new WeakSet();
+    }
+    const replay = this.privious_time == null || current_time < this.privious_time;
 
     for (const track of this.id3Tracks) {
-      const cues = Array.from(track.cues ?? []);
-      if (cues.length === 0) { continue; }
+      const cues = track.cues;
+      if (cues == null || cues.length === 0) { continue; }
+      const previous = this.cueSnapshots.get(track);
+      const changed = previous == null || previous.length !== cues.length
+        || previous.first !== cues[0] || previous.last !== cues[cues.length - 1];
+      this.cueSnapshots.set(track, { length: cues.length, first: cues[0], last: cues[cues.length - 1] });
+      // On attach, seek, or cue-list updates, include the current buffer's
+      // short decoding pre-roll. Track cue identity prevents re-feeding an
+      // earlier cue when the list grows during uninterrupted playback.
+      const scan_buffered_range = replay || changed;
+      const buffer_scan_start = buffered_start - SEEK_BUFFER_PREROLL_SECONDS;
+      const scan_start = replay ? buffer_scan_start
+        : changed ? Math.min(buffer_scan_start, this.privious_time!) : this.privious_time!;
 
       let prev_index: number | null = null;
       let curr_index: number | null = null;
 
       {
-        let begin = 0, end = cues.length;
+        let begin = -1, end = cues.length;
         while (begin + 1 < end) {
           const middle = Math.floor((begin + end) / 2);
           const start_time = cues[middle].startTime;
 
-          if (this.privious_time < start_time) {
+          if (scan_buffered_range ? scan_start <= start_time : scan_start < start_time) {
             end = middle;
           } else {
             begin = middle;
@@ -129,7 +213,7 @@ export default class HLSFeeder extends DecodingFeeder {
         prev_index = begin;
       }
       {
-        let begin = 0, end = cues.length;
+        let begin = -1, end = cues.length;
         while (begin + 1 < end) {
           const middle = Math.floor((begin + end) / 2);
           const start_time = cues[middle].startTime;
@@ -148,17 +232,23 @@ export default class HLSFeeder extends DecodingFeeder {
       }
 
       if (prev_index < curr_index) {
-        for (let index = curr_index; index > prev_index; index--) {
-          this.feedID3v2Cue(cues[index]);
-        }
-      } else {
-        for (let index = prev_index; index < curr_index; index++) {
-          this.feedID3v2Cue(cues[index]);
+        // The decoder needs management data before subsequent statements.
+        for (let index = prev_index + 1; index <= curr_index; index++) {
+          const cue = cues[index];
+          if (this.fedCues.has(cue)) { continue; }
+          this.feedID3v2Cue(cue);
+          this.fedCues.add(cue);
         }
       }
     }
 
     this.privious_time = current_time;
+    if (replay) {
+      // Scan first so prepare() anchors to the management cue in the new
+      // buffered range, not one retained from before the seek.
+      this.prepare(current_time, buffered_start);
+      if (this.media.paused) { this.notifyPresentationChange(); }
+    }
   }
 
   private registerRenderingLoop(): void {
@@ -178,6 +268,25 @@ export default class HLSFeeder extends DecodingFeeder {
 
   private onPause(): void {
     this.unregisterRenderingLoop();
+  }
+
+  private onBufferProgress(): void {
+    // No animation loop runs while paused. A seek can finish before its new
+    // range and ID3 cues arrive, so scan once when media is loaded later.
+    if (this.media?.paused) { this.scanCurrentBuffer(); }
+  }
+
+  public onSeeking(): void {
+    super.onSeeking();
+    this.privious_time = null;
+    this.fedCues = new WeakSet();
+    this.cueSnapshots.clear();
+  }
+
+  public onSeeked(): void {
+    // The regular scan loop is stopped while paused, but the seek target can
+    // have a different set of buffered ID3 cues that must be read once.
+    this.scanCurrentBuffer();
   }
 
   private feedID3v2Cue(cue: TextTrackCue): void {
