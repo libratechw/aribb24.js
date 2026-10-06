@@ -1,0 +1,1 @@
+var e={from(e){return{replace:{half:!0,drcs:new Map,...e?.replace}}}};exports.TextRendererOption=e;

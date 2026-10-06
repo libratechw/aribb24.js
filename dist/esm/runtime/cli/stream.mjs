@@ -1,0 +1,52 @@
+//#region src/runtime/cli/stream.ts
+var e = (e) => {
+	let t = globalThis.Bun;
+	return e === "-" ? t.stdin.stream() : t.file(e).stream();
+}, t = async (e) => {
+	let t = globalThis.Deno;
+	return e === "-" ? t.stdin.readable : (await t.open(e, { read: !0 })).readable;
+}, n = async (e) => {
+	if (e === "-") return ReadableStream.from(globalThis.process.stdin);
+	let t = await import("node:fs");
+	return ReadableStream.from(t.createReadStream(e));
+}, r = (e) => {
+	let t = globalThis.Bun;
+	if (e === "-") return t.stdout.stream();
+	let n = t.file(e).writer();
+	return new WritableStream({
+		write(e) {
+			n.write(e);
+		},
+		close() {
+			n.end();
+		}
+	});
+}, i = (e) => {
+	let t = globalThis.Deno;
+	return e === "-" ? t.stdout.writable : t.open(e, { create: !0 }).writable;
+}, a = async (e) => {
+	if (e === "-") return new WritableStream({ write(e) {
+		process.stdout.write(e);
+	} });
+	let t = (await import("node:fs")).createWriteStream(e);
+	return new WritableStream({
+		write(e) {
+			t.write(e);
+		},
+		close() {
+			t.close();
+		}
+	});
+}, o = async (r) => {
+	if (globalThis.Deno) return t(r);
+	if (globalThis.Bun) return e(r);
+	if (globalThis.process?.release?.name === "node") return n(r);
+	throw Error("UnSupported Runtime!");
+}, s = async (e) => {
+	if (globalThis.Deno) return i(e);
+	if (globalThis.Bun) return r(e);
+	if (globalThis.process?.release?.name === "node") return a(e);
+	throw Error("UnSupported Runtime!");
+};
+//#endregion
+export { o as readableStream, s as writableStream };

@@ -1,0 +1,1 @@
+var e=require(`../parser.js`).initialState;exports.default=e;

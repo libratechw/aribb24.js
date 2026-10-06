@@ -1,0 +1,1 @@
+const e=require(`../../../tokenizer/b24/jis8/ascii.js`),t=require(`./halfwidth.js`);var n=new Map([...Array.from(e.default.entries()).map(([e,t])=>[t,[e]]),...Array.from(e.default.entries()).filter(([e,n])=>t.default.has(n)).map(([e,n])=>[t.default.get(n),[e]])]);exports.default=n;

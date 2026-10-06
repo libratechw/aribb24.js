@@ -1,0 +1,1 @@
+{"version":3,"file":"renderer-option.d.ts","sourceRoot":"","sources":["../../../../../src/runtime/browser/renderer/renderer-option.ts"],"names":[],"mappings":"AAAA,MAAM,MAAM,cAAc,GAAG,EAAE,CAAC;AAEhC,eAAO,MAAM,cAAc;kBACV,OAAO,CAAC,cAAc,CAAC,GAAG,cAAc;CAKxD,CAAA"}

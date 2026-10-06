@@ -1,0 +1,1 @@
+var e={from(e){return{font:{normal:`'Hiragino Maru Gothic Pro', 'BIZ UDGothic', 'Yu Gothic Medium', sans-serif`,...e?.font},replace:{half:!0,drcs:new Map,glyph:new Map,...e?.replace},color:{stroke:null,foreground:null,background:null,...e?.color},resize:{target:`container`,objectFit:`contain`,...e?.resize}}}};exports.CanvasRendererOption=e;

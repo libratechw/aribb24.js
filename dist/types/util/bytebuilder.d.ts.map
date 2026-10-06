@@ -1,0 +1,1 @@
+{"version":3,"file":"bytebuilder.d.ts","sourceRoot":"","sources":["../../../src/util/bytebuilder.ts"],"names":[],"mappings":"AAEA,qBAAa,WAAW;IACtB,OAAO,CAAC,OAAO,CAAyB;IAEjC,KAAK;IAIL,KAAK,CAAC,MAAM,EAAE,eAAe,GAAG,IAAI;IAIpC,OAAO,CAAC,KAAK,EAAE,MAAM;IAMrB,QAAQ,CAAC,KAAK,EAAE,MAAM;IAMtB,QAAQ,CAAC,KAAK,EAAE,MAAM;IAOtB,QAAQ,CAAC,KAAK,EAAE,MAAM;CAK9B"}

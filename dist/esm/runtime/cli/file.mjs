@@ -1,0 +1,21 @@
+//#region src/runtime/cli/file.ts
+var e = async (e, t) => {
+	let n = globalThis.Bun;
+	await n.write(e === "-" ? n.stdout : e, t);
+}, t = async (e, t) => {
+	let n = new TextEncoder(), r = globalThis.Deno, i = typeof t == "string" ? n.encode(t) : new Uint8Array(t);
+	if (e === "-") {
+		let e = 0;
+		for (; e < i.byteLength;) e += await r.stdout.write(i.subarray(e));
+	} else await r.writeFile(e, i);
+}, n = async (e, t) => {
+	let n = globalThis.Buffer, r = globalThis.process;
+	e === "-" ? r.stdout.write(n.from(t)) : await (await import("node:fs/promises")).writeFile(e, n.from(t));
+}, r = async (r, i) => {
+	if (globalThis.Deno) return t(r, i);
+	if (globalThis.Bun) return e(r, i);
+	if (globalThis.process?.release?.name === "node") return n(r, i);
+	throw Error("UnSupported Runtime!");
+};
+//#endregion
+export { r as writeFS };

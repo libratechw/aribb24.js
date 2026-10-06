@@ -1,0 +1,12 @@
+import { ARIBB24CharacterParsedToken, ARIBB24DRCSParsedToken, ARIBB24ParsedToken } from "../../../../lib/parser/parser";
+import { CanvasRendererOption } from "./renderer-option";
+import { CaptionAssociationInformation } from "../../../../lib/demuxer/b24/datagroup";
+declare const _default: (buffer: HTMLCanvasElement | OffscreenCanvas, Path2DSource: typeof Path2D, magnification: [number, number], tokens: ARIBB24ParsedToken[], info: CaptionAssociationInformation, rendererOption: CanvasRendererOption) => void;
+export default _default;
+export declare const clear: (context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, token: ARIBB24CharacterParsedToken | ARIBB24DRCSParsedToken, magnification: [number, number], info: CaptionAssociationInformation, rendererOption: CanvasRendererOption) => void;
+export declare const renderBackground: (context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, token: ARIBB24CharacterParsedToken | ARIBB24DRCSParsedToken, magnification: [number, number], info: CaptionAssociationInformation, rendererOption: CanvasRendererOption) => void;
+export declare const renderHighlight: (context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, token: ARIBB24CharacterParsedToken | ARIBB24DRCSParsedToken, magnification: [number, number], info: CaptionAssociationInformation, rendererOption: CanvasRendererOption) => void;
+export declare const renderUnderline: (context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, token: ARIBB24CharacterParsedToken | ARIBB24DRCSParsedToken, magnification: [number, number], info: CaptionAssociationInformation, rendererOption: CanvasRendererOption) => void;
+export declare const renderCharacter: (context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, token: ARIBB24CharacterParsedToken, Path2DSource: typeof Path2D, magnification: [number, number], info: CaptionAssociationInformation, rendererOption: CanvasRendererOption) => void;
+export declare const renderDRCS: (context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, token: ARIBB24DRCSParsedToken, Path2DSource: typeof Path2D, magnification: [number, number], info: CaptionAssociationInformation, rendererOption: CanvasRendererOption) => void;
+//# sourceMappingURL=renderer-strategy.d.ts.map

@@ -1,0 +1,50 @@
+import { section_length as e } from "./section.mjs";
+//#region src/lib/demuxer/mpegts/pmt.ts
+var t = (t) => {
+	let n = [], r = (t[10] & 15) << 8 | t[11], i = 3 + e(t) - 4, a = 12 + r;
+	for (; a < i;) {
+		let e = t[a + 0], r = (t[a + 1] & 31) << 8 | t[a + 2], i = (t[a + 3] & 15) << 8 | t[a + 4], o = null;
+		switch (e) {
+			case 1:
+				o = "VIDEO";
+				break;
+			case 2:
+				o = "VIDEO";
+				break;
+			case 27:
+				o = "VIDEO";
+				break;
+			case 36:
+				o = "VIDEO";
+				break;
+			case 3:
+				o = "AUDIO";
+				break;
+			case 4:
+				o = "AUDIO";
+				break;
+			case 15:
+				o = "AUDIO";
+				break;
+			case 17:
+				o = "AUDIO";
+				break;
+		}
+		let s = a + 5;
+		for (; s < a + 5 + i;) {
+			let n = t[s + 0], r = t[s + 1];
+			if (n === 82) {
+				let n = t[s + 2];
+				e === 6 && n === 48 ? o = "ARIBB24_CAPTION" : e === 6 && n === 56 && (o = "ARIBB24_SUPERIMPOSE");
+			}
+			s += 2 + r;
+		}
+		o != null && n.push({
+			type: o,
+			elementary_PID: r
+		}), a += 5 + i;
+	}
+	return n;
+};
+//#endregion
+export { t as default };

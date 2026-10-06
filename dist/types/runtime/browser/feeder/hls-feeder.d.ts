@@ -1,0 +1,45 @@
+import { PartialFeederOption } from './feeder';
+import DecodingFeeder from './decoding-feeder';
+export default class HLSFeeder extends DecodingFeeder {
+    private static readonly trackModeOwners;
+    private media;
+    private timer;
+    private privious_time;
+    private id3Tracks;
+    private fedCues;
+    private ownedTrackModes;
+    private cueSnapshots;
+    private readonly onAddTrackHandler;
+    private readonly onRemoveTrackHandler;
+    private readonly onPlayHandler;
+    private readonly onPauseHandler;
+    private readonly onBufferProgressHandler;
+    private readonly introspectHandler;
+    constructor(option?: PartialFeederOption);
+    attachMedia(media: HTMLVideoElement): void;
+    detachMedia(): void;
+    private static isID3Track;
+    private setupHandlers;
+    private cleanupHandlers;
+    destroy(): void;
+    private registerID3Track;
+    private unregisterID3Track;
+    private enableID3Track;
+    private restoreID3TrackMode;
+    private onAddTrack;
+    private onRemoveTrack;
+    private bufferedStart;
+    private introspect;
+    private scanCurrentBuffer;
+    private registerRenderingLoop;
+    private unregisterRenderingLoop;
+    private onPlay;
+    private onPause;
+    private onBufferProgress;
+    onSeeking(): void;
+    onSeeked(): void;
+    private feedID3v2Cue;
+    feedB24(data: Uint8Array | ArrayBufferLike, pts: number, dts?: number): void;
+    feedID3(data: Uint8Array | ArrayBufferLike, pts: number, dts?: number): void;
+}
+//# sourceMappingURL=hls-feeder.d.ts.map

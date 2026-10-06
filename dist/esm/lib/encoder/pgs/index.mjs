@@ -1,0 +1,53 @@
+import { ByteBuilder as e } from "../../../util/bytebuilder.mjs";
+//#region src/lib/encoder/pgs/index.ts
+var t = {
+	PDS: 20,
+	ODS: 21,
+	PCS: 22,
+	WDS: 23,
+	END: 128
+}, n = { into(t) {
+	let n = new e();
+	return n.writeU16(t.objectId), n.writeU8(t.windowId), n.writeU8(t.objectCroppedFlag ? 128 : 0), n.writeU16(t.objectHorizontalPosition), n.writeU16(t.objectVerticalPosition), t.objectCroppedFlag ? (n.writeU16(t.objectCroppingHorizontalPosition), n.writeU16(t.objectCroppingVerticalPosition), n.writeU16(t.objectCroppingWidth), n.writeU16(t.objectCroppingHeight), n.build()) : n.build();
+} }, r = {
+	Normal: 0,
+	AcquisitionPoint: 64,
+	EpochStart: 128
+}, i = { into(t) {
+	let r = new e();
+	r.writeU16(t.width), r.writeU16(t.height), r.writeU8(t.frameRate), r.writeU16(t.compositionNumber), r.writeU8(t.compositionState), r.writeU8(t.paletteUpdateFlag ? 128 : 0), r.writeU8(t.paletteId), r.writeU8(t.numberOfCompositionObject);
+	for (let e of t.compositionObjects) r.write(n.into(e));
+	return r.build();
+} }, a = { into(t) {
+	let n = new e();
+	return n.writeU8(t.windowId), n.writeU16(t.windowHorizontalPosition), n.writeU16(t.windowVerticalPosition), n.writeU16(t.windowWidth), n.writeU16(t.windowHeight), n.build();
+} }, o = { into(t) {
+	let n = new e();
+	n.writeU8(t.numberOfWindow);
+	for (let e of t.windows) n.write(a.into(e));
+	return n.build();
+} }, s = { into(t) {
+	let n = new e();
+	return n.writeU8(t.paletteEntryID), n.writeU8(t.luminance), n.writeU8(t.colorDifferenceRed), n.writeU8(t.colorDifferenceBlue), n.writeU8(t.transparency), n.build();
+} }, c = { into(t) {
+	let n = new e();
+	n.writeU8(t.paletteID), n.writeU8(t.paletteVersionNumber);
+	for (let e of t.paletteEntries) n.write(s.into(e));
+	return n.build();
+} }, l = {
+	LastInSequence: 64,
+	FirstInSequence: 128,
+	FirstAndLastInSequence: 192,
+	IntermediateSequence: 0
+}, u = { into(t) {
+	let n = new e();
+	return n.writeU16(t.objectId), n.writeU8(t.objectVersionNumber), n.writeU8(t.lastInSequenceFlag), t.lastInSequenceFlag === l.FirstInSequence || t.lastInSequenceFlag === l.FirstAndLastInSequence ? (n.writeU24(t.objectDataLength), n.writeU16(t.width), n.writeU16(t.height), n.write(t.objectData)) : n.write(t.objectData), n.build();
+} }, d = { into() {
+	return /* @__PURE__ */ new ArrayBuffer(0);
+} }, f = (t, n) => {
+	let r = new e(), i = n.byteLength;
+	if (i >= 2 ** 16) throw Error("Exceeded Segment Length");
+	return r.writeU8(t), r.writeU16(i), r.write(n), r.build();
+};
+//#endregion
+export { r as CompositionState, d as EndSegment, u as ObjectDefinitionSegment, c as PaletteDefinitionSegment, i as PresentationCompositionSegment, t as SegmentType, l as SequenceFlag, o as WindowDefinitionSegment, f as encodeSegment };

@@ -1,0 +1,1 @@
+const e=require(`../../lib/parser/parser.js`);var t=(t,n)=>n.association===`SBTVD`&&t===e.ARIBB24_CHARACTER_SIZE.Small||t===e.ARIBB24_CHARACTER_SIZE.Middle;exports.shouldHalfWidth=t;

@@ -1,0 +1,2 @@
+export { SVGRendererOption as SVGDOMRendererOption, type PartialSVGRendererOption as PartialSVGDOMRendererOption } from "../../../common/renderer/svg/renderer-option";
+//# sourceMappingURL=svg-dom-renderer-option.d.ts.map

@@ -1,0 +1,88 @@
+import e from "../../util/crc32.mjs";
+import { ARIBB24Parser as t } from "../../lib/parser/parser.mjs";
+import { replaceDRCS as n } from "../../lib/tokenizer/b24/tokenizer.mjs";
+import r from "../../lib/parser/regioner.mjs";
+//#region src/runtime/browser/types.ts
+var i = { async from(t, n) {
+	let r = new Uint8Array(t.binary), i = new Set(t.flc_colors), a = r.subarray(0, 33), o = r.subarray(33, r.byteLength), s = new Uint8Array(a.byteLength + o.byteLength + 396 + 140), c = new DataView(s.buffer);
+	s.set(a, 0), s.set(o, 569);
+	for (let e = 0; e < n.length; e++) {
+		let t = n[e], r = Number.parseInt(t.substring(1, 3), 16), a = Number.parseInt(t.substring(3, 5), 16), o = Number.parseInt(t.substring(5, 7), 16), c = Number.parseInt(t.substring(7, 9), 16);
+		s[41 + e * 3 + 0] = r, s[41 + e * 3 + 1] = a, s[41 + e * 3 + 2] = o, s[437 + e] = i.has(e) ? 0 : c;
+	}
+	c.setInt32(33, 384, !1), s[37] = 80, s[38] = 76, s[39] = 84, s[40] = 69, c.setInt32(429, 128, !1), s[433] = 116, s[434] = 82, s[435] = 78, s[436] = 83, c.setInt32(425, e(s, 37, 425), !1), c.setInt32(565, e(s, 433, 565), !1);
+	let l = c.getInt32(16, !1), u = c.getInt32(20, !1), d = new Image(l, u);
+	d.src = "data:image/png;base64," + btoa(String.fromCharCode(...s)), await d.decode();
+	let f = await createImageBitmap(d);
+	if (i.size === 0) return {
+		tag: "Bitmap",
+		x_position: t.x_position,
+		y_position: t.y_position,
+		width: l,
+		height: u,
+		normal_dataurl: d.src,
+		normal_bitmap: f
+	};
+	for (let e = 0; e < n.length; e++) {
+		let t = n[e], r = Number.parseInt(t.substring(7, 9), 16);
+		s[437 + e] = i.has(e) ? r : 0;
+	}
+	c.setInt32(425, e(s, 37, 425), !1), c.setInt32(565, e(s, 433, 565), !1);
+	let p = new Image(l, u);
+	p.src = "data:image/png;base64," + btoa(String.fromCharCode(...s)), await p.decode();
+	let m = await createImageBitmap(p);
+	return {
+		tag: "Bitmap",
+		x_position: t.x_position,
+		y_position: t.y_position,
+		width: l,
+		height: u,
+		normal_dataurl: d.src,
+		normal_bitmap: f,
+		flashing_dataurl: p.src,
+		flashing_bitmap: m
+	};
+} }, a = { from(e, t, n) {
+	return {
+		tag: "Bitmap",
+		state: structuredClone(t),
+		option: structuredClone(n),
+		x_position: e.x_position * n.magnification,
+		y_position: e.y_position * n.magnification,
+		width: e.width * n.magnification,
+		height: e.height * n.magnification,
+		normal_dataurl: e.normal_dataurl,
+		normal_bitmap: e.normal_bitmap,
+		flashing_dataurl: e.flashing_dataurl,
+		flashing_bitmap: e.flashing_bitmap
+	};
+} }, o = async (e, t) => {
+	let n = [];
+	for (let r of e) {
+		if (r.tag !== "Bitmap") {
+			n.push(r);
+			continue;
+		}
+		n.push(await i.from(r, t));
+	}
+	return n;
+}, s = (e) => e.filter((e) => e.tag !== "Bitmap"), c = class {
+	praser;
+	constructor(e, n) {
+		this.praser = new t(e, n);
+	}
+	currentState() {
+		return this.praser.currentState();
+	}
+	currentOption() {
+		return this.praser.currentOption();
+	}
+	parseBitmapOrInherit(e) {
+		return e.tag === "Bitmap" ? [a.from(e, this.praser.currentState(), this.praser.currentOption())] : this.praser.parseToken(e);
+	}
+	parse(e) {
+		return e.flatMap(this.parseBitmapOrInherit.bind(this));
+	}
+}, l = (e, t) => n(e, t), u = (e, t, n) => r(e.filter((e) => e.tag === "Bitmap" ? (e.normal_bitmap.close(), e.flashing_bitmap?.close(), !1) : !0), t, n);
+//#endregion
+export { c as ARIBB24BrowserParser, u as makeRegions, l as replaceDRCS, o as toBrowserTokenWithBitmap, s as toBrowserTokenWithoutBitmap };

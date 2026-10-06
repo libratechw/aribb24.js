@@ -1,0 +1,1 @@
+var e=e=>{if(e=e instanceof Uint8Array?e:new Uint8Array(e),e.byteLength<=0)return null;let t=e[0];if(t!==128&&t!==129)return null;let n=t===128?`Caption`:`Superimpose`;if(e.byteLength<=2)return null;let r=3+(e[2]&15);return e.byteLength<r?null:{tag:n,data:e.subarray(r)}};exports.default=e;

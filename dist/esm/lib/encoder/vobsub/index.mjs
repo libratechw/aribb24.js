@@ -1,0 +1,141 @@
+import e from "../../../util/concat.mjs";
+//#region src/lib/encoder/vobsub/index.ts
+var t = (e) => {
+	let t = /* @__PURE__ */ new ArrayBuffer(2);
+	return new DataView(t).setUint16(0, e, !1), t;
+}, n = { into() {
+	return /* @__PURE__ */ new ArrayBuffer();
+} }, r = { into() {
+	return /* @__PURE__ */ new ArrayBuffer();
+} }, i = { into(e) {
+	let t = /* @__PURE__ */ new ArrayBuffer(2), n = new Uint8Array(t);
+	return n[0] = e[0] << 4 | e[1] << 0, n[1] = e[2] << 4 | e[3] << 0, t;
+} }, a = { into(e) {
+	let t = /* @__PURE__ */ new ArrayBuffer(2), n = new Uint8Array(t);
+	return n[0] = e[0] << 4 | e[1] << 0, n[1] = e[2] << 4 | e[3] << 0, t;
+} }, o = { into(e) {
+	let t = /* @__PURE__ */ new ArrayBuffer(6), n = new Uint8Array(t);
+	return n[0] = (e[0] & 4080) >> 4, n[1] = (e[0] & 15) << 4 | (e[1] & 3840) >> 8, n[2] = (e[1] & 255) >> 0, n[3] = (e[2] & 4080) >> 4, n[4] = (e[2] & 15) << 4 | (e[3] & 3840) >> 8, n[5] = (e[3] & 255) >> 0, t;
+} }, s = { into(e) {
+	let t = /* @__PURE__ */ new ArrayBuffer(4), n = new DataView(t);
+	return n.setUint16(0, e[0], !1), n.setUint16(2, e[1], !1), t;
+} }, c = { into() {
+	return /* @__PURE__ */ new ArrayBuffer();
+} }, l = class {
+	nibbles = [];
+	write(...e) {
+		this.nibbles.push(...e);
+	}
+	align() {
+		this.nibbles.length % 2 != 0 && this.nibbles.push(0);
+	}
+	build() {
+		let e = Math.floor((this.nibbles.length + 1) / 2), t = new Uint8Array(e);
+		for (let n = 0; n < e; n++) t[n] = (n * 2 + 0 < this.nibbles.length ? this.nibbles[n * 2 + 0] << 4 : 0) | (n * 2 + 1 < this.nibbles.length ? this.nibbles[n * 2 + 1] << 0 : 0);
+		return t.buffer;
+	}
+}, u = (e) => {
+	let t = new l();
+	for (let n = 0; n < e.length; n++) {
+		let r = 0, i = 1;
+		for (; r < e[n].length;) {
+			let a = 3 - e[n][r];
+			for (; i < e[n].length && i + 1 - r < 255 && e[n][r] === e[n][i];) i++;
+			let o = i - r;
+			if (i === e[n].length) t.write(0, 0, 0, a);
+			else if (o <= 3) {
+				let e = o;
+				t.write(e << 2 | a);
+			} else if (o <= 15) {
+				let e = o - 3 - 1, n = 1 + (e >> 2 & 15), r = e & 3;
+				t.write(n, r << 2 | a);
+			} else if (o <= 63) {
+				let e = o - 15 - 1, n = 4 + (e >> 2 & 15), r = e & 3;
+				t.write(0, n, r << 2 | a);
+			} else if (o <= 255) {
+				let e = o - 63 - 1, n = 1 + (e >> 6 & 3), r = e >> 2 & 15, i = e & 3;
+				t.write(0, n, r, i << 2 | a);
+			}
+			r = i;
+		}
+		t.align();
+	}
+	return t.build();
+}, d = (e, t, n, r) => {
+	let i = [];
+	for (let a = 0; a < t; a += 2) {
+		let t = Math.floor(a / 2);
+		i.push([]);
+		for (let o = 0; o < e; o++) {
+			let s = (a * e + o) * 4, c = n[s + 0], l = n[s + 1], u = n[s + 2], d = n[s + 3], f = Infinity, p = -1;
+			for (let e = 0; e < r.length; e++) {
+				let [t, n, i, a] = r[e], o = (t - c) ** 2 + (n - l) ** 2 + (i - u) ** 2 + (a - d) ** 2;
+				o < f && (f = o, p = e);
+			}
+			i[t].push(p);
+		}
+	}
+	let a = [];
+	for (let i = 1; i < t; i += 2) {
+		let t = Math.floor((i - 1) / 2);
+		a.push([]);
+		for (let o = 0; o < e; o++) {
+			let s = (i * e + o) * 4, c = n[s + 0], l = n[s + 1], u = n[s + 2], d = n[s + 3], f = Infinity, p = -1;
+			for (let e = 0; e < r.length; e++) {
+				let [t, n, i, a] = r[e], o = (t - c) ** 2 + (n - l) ** 2 + (i - u) ** 2 + (a - d) ** 2;
+				o < f && (f = o, p = e);
+			}
+			a[t].push(p);
+		}
+	}
+	return [u(i), u(a)];
+}, f = (l, u, f, p, m, h, g, _) => {
+	let v = g.map((e) => [
+		Number.parseInt(e.slice(1, 3), 16),
+		Number.parseInt(e.slice(3, 5), 16),
+		Number.parseInt(e.slice(5, 7), 16),
+		Number.parseInt(e.slice(7, 9), 16)
+	]), y = _.map((e) => [
+		Number.parseInt(e.slice(1, 3), 16),
+		Number.parseInt(e.slice(3, 5), 16),
+		Number.parseInt(e.slice(5, 7), 16)
+	]), b = v.map(([e, t, n]) => {
+		let r = 0, i = Infinity;
+		for (let a = 0; a < y.length; a++) {
+			let [o, s, c] = y[a], l = (e - o) ** 2 + (t - s) ** 2 + (n - c) ** 2;
+			l < i && (i = l, r = a);
+		}
+		return r;
+	}), x = v.map((e) => {
+		let t = e[3];
+		return Math.floor(t / 16);
+	}), [S, C] = d(f, p, m, [
+		[...y[b[0]], x[0] * 16 + x[0]],
+		[...y[b[1]], x[1] * 16 + x[1]],
+		[...y[b[2]], x[2] * 16 + x[2]],
+		[...y[b[3]], x[3] * 16 + x[3]]
+	]), w = S.byteLength + C.byteLength + 4, T = [], E = w;
+	{
+		let e = E, r = [Uint8Array.from([1]).buffer, n.into()], d = [Uint8Array.from([3]).buffer, i.into(b)], m = [Uint8Array.from([4]).buffer, a.into(x)], g = [Uint8Array.from([5]).buffer, o.into([
+			l,
+			l + f - 1,
+			u,
+			u + p - 1
+		])], _ = [Uint8Array.from([6]).buffer, s.into([4, 4 + S.byteLength])], v = [Uint8Array.from([255]).buffer, c.into()], y = [
+			...r,
+			...d,
+			...m,
+			...g,
+			..._,
+			...v
+		], C = y.reduce((e, t) => e + t.byteLength, 0);
+		e += h == null ? 0 : C + 4, E += C + 4, T.push(t(0), t(e)), T.push(...y);
+	}
+	if (h != null) {
+		let e = E, n = [Uint8Array.from([2]).buffer, r.into()], i = [Uint8Array.from([255]).buffer, c.into()];
+		T.push(t(Math.floor(h * 100)), t(e)), T.push(...n, ...i);
+	}
+	return e(t(w + T.reduce((e, t) => e + t.byteLength, 0)), t(w), S, C, ...T);
+};
+//#endregion
+export { f as encode };

@@ -1,0 +1,12 @@
+//#region src/runtime/cli/exit.ts
+var e = (e = 0) => {
+	throw globalThis.process.exit(e), Error("Not Reachable");
+}, t = (e = 0) => {
+	throw globalThis.Deno.exit(e), Error("Not Reachable");
+}, n = (n = 0) => {
+	if (globalThis.Deno) return t(n);
+	if (globalThis.Bun || globalThis.process?.release?.name === "node") return e(n);
+	throw Error("UnSupported Runtime!");
+};
+//#endregion
+export { n as exit };

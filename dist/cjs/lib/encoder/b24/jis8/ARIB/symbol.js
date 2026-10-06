@@ -1,0 +1,1 @@
+const e=require(`../../../../tokenizer/b24/jis8/ARIB/symbol-pua.js`),t=require(`../../../../tokenizer/b24/jis8/ARIB/symbol-unicode.js`);var n=new Map([...Array.from(e.default.entries()).map(([e,t])=>[t,[(e&65280)>>8,(e&255)>>0]]),...Array.from(t.default.entries()).map(([e,t])=>[t,[(e&65280)>>8,(e&255)>>0]])]);exports.default=n;

@@ -1,0 +1,219 @@
+import { ExhaustivenessError as e } from "./error.mjs";
+//#region src/util/avl.ts
+var t = class {
+	actual = null;
+	compareKey;
+	compareOrder;
+	calculateOrder;
+	constructor(e, t, n) {
+		this.compareKey = e, this.compareOrder = t, this.calculateOrder = n;
+	}
+	get parent() {
+		return null;
+	}
+	get balanced() {
+		return this.actual?.balanced ?? !0;
+	}
+	get bias() {
+		return this.actual?.bias ?? 0;
+	}
+	toString() {
+		return `${this.actual}`;
+	}
+	refresh() {}
+	rotate() {}
+	has(e) {
+		return this.actual?.has(e) ?? !1;
+	}
+	get(e) {
+		return this.actual?.get(e) ?? void 0;
+	}
+	floor(e) {
+		return this.actual?.floor(e) ?? void 0;
+	}
+	ceil(e) {
+		return this.actual?.ceil(e) ?? void 0;
+	}
+	insert(e, t) {
+		this.actual == null ? this.actual = new n(e, t, this, this.compareKey, this.compareOrder, this.calculateOrder) : this.actual.insert(e, t);
+	}
+	delete(e) {
+		this.actual?.delete(e);
+	}
+	replace(e, t) {
+		e != null && this.actual === e && (e.parent = null, this.actual = t, t != null && (t.parent = this));
+	}
+	forEach(e) {
+		this.actual?.forEach(e);
+	}
+	*range(e, t) {
+		yield* this.actual?.range(e, t) ?? [];
+	}
+}, n = class t {
+	key;
+	value;
+	order;
+	parent;
+	left = null;
+	right = null;
+	depth = 1;
+	compareKey;
+	compareOrder;
+	calculateOrder;
+	constructor(e, t, n, r, i, a) {
+		this.key = e, this.value = t, this.parent = n, this.compareKey = r, this.compareOrder = i, this.calculateOrder = a, this.order = this.calculateOrder(this.key);
+	}
+	refresh() {
+		this.depth = Math.max(this.left?.depth ?? 0, this.right?.depth ?? 0) + 1;
+	}
+	get balanced() {
+		let e = Math.min(this.left?.depth ?? 0, this.right?.depth ?? 0);
+		return Math.max(this.left?.depth ?? 0, this.right?.depth ?? 0) - e <= 1;
+	}
+	get bias() {
+		return (this.left?.depth ?? 0) - (this.right?.depth ?? 0);
+	}
+	leftmost() {
+		return this.left == null ? this : this.left.leftmost();
+	}
+	rightmost() {
+		return this.right == null ? this : this.right.rightmost();
+	}
+	rotateL() {
+		if (this.right == null) return;
+		let e = this.right;
+		this.replace(e, e.left), e.left = this, this.parent?.replace(this, e), this.parent = e, this.refresh(), this.parent?.refresh();
+	}
+	rotateR() {
+		if (this.left == null) return;
+		let e = this.left;
+		this.replace(e, e.right), e.right = this, this.parent?.replace(this, e), this.parent = e, this.refresh(), this.parent?.refresh();
+	}
+	rotateLR() {
+		this.left != null && (this.left.rotateL(), this.rotateR());
+	}
+	rotateRL() {
+		this.right != null && (this.right.rotateR(), this.rotateL());
+	}
+	rotate() {
+		this.bias === 2 ? (this.left?.bias ?? 0) >= 0 ? this.rotateR() : this.rotateLR() : this.bias === -2 && ((this.right?.bias ?? 0) <= 0 ? this.rotateL() : this.rotateRL());
+	}
+	find(t, n = "exact") {
+		let r = this, i = null;
+		FIND: for (;;) {
+			let a = this.compareKey(t, r.key);
+			switch (a) {
+				case 0: return r;
+				case -1:
+					if (n === "ceil" && (i = r), r.left != null) {
+						r = r.left;
+						continue FIND;
+					}
+					return i;
+				case 1:
+					if (n === "floor" && (i = r), r.right != null) {
+						r = r.right;
+						continue FIND;
+					}
+					return i;
+				default: throw new e(a, "Exhaustive check reached!");
+			}
+		}
+	}
+	has(e) {
+		return this.find(e, "exact") != null;
+	}
+	get(e) {
+		return this.find(e, "exact")?.value ?? void 0;
+	}
+	floor(e) {
+		return this.find(e, "floor")?.value ?? void 0;
+	}
+	ceil(e) {
+		return this.find(e, "ceil")?.value ?? void 0;
+	}
+	insert(n, r) {
+		let i = this;
+		FIND: for (;;) {
+			let a = this.compareKey(n, i.key);
+			switch (a) {
+				case 0:
+					i.value = r;
+					return;
+				case -1:
+					if (i.left != null) {
+						i = i.left;
+						continue FIND;
+					}
+					i.left = new t(n, r, i, this.compareKey, this.compareOrder, this.calculateOrder), i = i.left;
+					break FIND;
+				case 1:
+					if (i.right != null) {
+						i = i.right;
+						continue FIND;
+					}
+					i.right = new t(n, r, i, this.compareKey, this.compareOrder, this.calculateOrder), i = i.right;
+					break FIND;
+				default: throw new e(a, "Exhaustive check reached!");
+			}
+		}
+		for (let e = i; e != null; e = e.parent) e.rotate(), e.refresh();
+	}
+	delete(e) {
+		let t = this.find(e);
+		if (t == null) return;
+		let n = t.left?.rightmost(), r = t.right?.leftmost(), i;
+		n ? (i = n.parent === t ? n : n.parent, n.parent?.replace(n, n.left), t.parent?.replace(t, n), n.right = t.right, t.right != null && (t.right.parent = n), n.left = t.left, t.left != null && (t.left.parent = n)) : r ? (i = r.parent === t ? r : r.parent, r.parent?.replace(r, r.right), t.parent?.replace(t, r), r.left = t.left, t.left != null && (t.left.parent = r), r.right = t.right, t.right != null && (t.right.parent = r)) : (i = t.parent, t.parent?.replace(t, null));
+		for (let e = i; e != null; e = e.parent) e.rotate(), e.refresh();
+	}
+	replace(e, t) {
+		this.left === e && (e.parent === this && (e.parent = null), t != null && (t.parent = this), this.left = t), this.right === e && (e.parent === this && (e.parent = null), t != null && (t.parent = this), this.right = t);
+	}
+	forEach(e) {
+		this.left != null && this.left.forEach(e), e(this.value), this.right != null && this.right.forEach(e);
+	}
+	*range(e, t) {
+		let n = this.compareOrder(e, this.order), r = this.compareOrder(t, this.order);
+		n <= 0 && (yield* this.left?.range(e, t) ?? []), n <= 0 && r >= 0 && (yield this.value), r >= 0 && (yield* this.right?.range(e, t) ?? []);
+	}
+}, r = class {
+	root;
+	compareKey;
+	compareOrder;
+	calculateOrder;
+	constructor(e, n, r) {
+		this.compareKey = e, this.compareOrder = n, this.calculateOrder = r, this.root = new t(this.compareKey, this.compareOrder, this.calculateOrder);
+	}
+	clear() {
+		this.root = new t(this.compareKey, this.compareOrder, this.calculateOrder);
+	}
+	has(e) {
+		return this.root.has(e);
+	}
+	get(e) {
+		return this.root.get(e);
+	}
+	floor(e) {
+		return this.root.floor(e);
+	}
+	ceil(e) {
+		return this.root.ceil(e);
+	}
+	forEach(e) {
+		this.root.forEach(e);
+	}
+	*range(e, t) {
+		yield* this.root.range(e, t);
+	}
+	insert(e, t) {
+		this.root.insert(e, t);
+	}
+	delete(e) {
+		this.root.delete(e);
+	}
+	toString() {
+		return `${this.root}`;
+	}
+};
+//#endregion
+export { r as default };

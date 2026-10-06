@@ -1,0 +1,46 @@
+import Feeder, { FeederPresentationData, PartialFeederOption } from './feeder';
+export declare const SEEK_BUFFER_PREROLL_SECONDS = 0.5;
+export default abstract class DecodingFeeder implements Feeder {
+    private option;
+    private priviousTime;
+    private priviousManagementData;
+    private priviousManagementDts;
+    private desiredLang;
+    private decoder;
+    private managementTimes;
+    private replayAfterSeek;
+    private pendingReplayWindow;
+    private retainedWindow;
+    private decodedWindowStart;
+    private decoderBuffer;
+    private awaitingManagement;
+    private notified;
+    private decodingPromise;
+    private decodingNotify;
+    private abortController;
+    private present;
+    private isDestroyed;
+    private generation;
+    private presentationChangeHandler;
+    private presentationChangeQueued;
+    private changedPresentationPts;
+    setPresentationChangeHandler(handler: ((changedPts?: readonly number[]) => void) | null): void;
+    protected notifyPresentationChange(pts?: number): void;
+    constructor(option?: PartialFeederOption);
+    private notify;
+    private generator;
+    private pump;
+    private insertPresentation;
+    protected feed(data: Uint8Array, pts: number, dts: number): void;
+    prepare(time: number, bufferedStart?: number | null): void;
+    content(time: number, bufferedStart?: number | null): FeederPresentationData | null;
+    clear(): void;
+    prune(before: number): void;
+    contentRange(from: number | null, to: number): readonly FeederPresentationData[] | null;
+    private disappearance;
+    onAttach(): void;
+    onDetach(): void;
+    onSeeking(): void;
+    destroy(): void;
+}
+//# sourceMappingURL=decoding-feeder.d.ts.map

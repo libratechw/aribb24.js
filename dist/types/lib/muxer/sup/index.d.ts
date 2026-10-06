@@ -1,0 +1,3 @@
+export declare const makeImageDataSup: (pts: number, dts: number, image: Uint8ClampedArray, palette: [number, number, number, number][], cache: Map<number, number>, plane: [number, number], offset: [number, number], area: [number, number]) => ArrayBufferLike;
+export declare const makeEmptySup: (pts: number, dts: number, plane: [number, number]) => ArrayBufferLike;
+//# sourceMappingURL=index.d.ts.map

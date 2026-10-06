@@ -1,0 +1,15 @@
+import { section_length as e } from "./section.mjs";
+//#region src/lib/demuxer/mpegts/pat.ts
+var t = (t) => {
+	let n = [], r = 3 + e(t) - 4;
+	for (let e = 8; e < r; e += 4) {
+		let r = t[e + 0] << 8 | t[e + 1] << 0, i = (t[e + 2] & 31) << 8 | t[e + 3] << 0;
+		r !== 0 && n.push({
+			program_number: r,
+			program_map_PID: i
+		});
+	}
+	return n;
+};
+//#endregion
+export { t as default };

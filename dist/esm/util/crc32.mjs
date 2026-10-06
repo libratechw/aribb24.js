@@ -1,0 +1,11 @@
+//#region src/util/crc32.ts
+function e(e, t = 0, n = e.byteLength) {
+	let r = -1;
+	for (let i = t; i < n; i++) {
+		r ^= e[i];
+		for (let e = 0; e < 8; e++) r & 1 ? r = r >>> 1 ^ 3988292384 : r >>>= 1;
+	}
+	return ~r;
+}
+//#endregion
+export { e as default };

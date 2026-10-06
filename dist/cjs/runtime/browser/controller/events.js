@@ -1,0 +1,1 @@
+var e={BuiltinSound:`BuiltinSound`},t={from(t){return{event:e.BuiltinSound,sound:t}}};exports.BuiltinSound=t,exports.EventType=e;

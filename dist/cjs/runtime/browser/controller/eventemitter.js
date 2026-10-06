@@ -1,0 +1,1 @@
+var e=class{listeners=new Map;on(e,t){this.listeners.has(e)||this.listeners.set(e,[]),this.listeners.get(e).push(t)}off(e,t){this.listeners.has(e)&&this.listeners.set(e,this.listeners.get(e).filter(e=>e!==t))}emit(e,t){(this.listeners.get(e)??[]).forEach(e=>{e(t)})}};exports.default=e;

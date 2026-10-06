@@ -1,0 +1,74 @@
+import { ExhaustivenessError as e } from "../../../../util/error.mjs";
+import { ARIBB24Parser as t } from "../../../../lib/parser/parser.mjs";
+import { shouldHalfWidth as n } from "../../quirk.mjs";
+import r from "../../colortable.mjs";
+import i from "../../halfwidth.mjs";
+import a from "../../namedcolor.mjs";
+import o from "../../font.mjs";
+//#region src/runtime/common/renderer/canvas/renderer-strategy.ts
+var s = (t, n, r, i, a, o) => {
+	let s = t.getContext("2d");
+	if (s != null) for (let c of i) switch (c.tag) {
+		case "Character":
+			f(s, c, n, r, a, o);
+			break;
+		case "DRCS":
+			m(s, c, n, r, a, o);
+			break;
+		case "ClearScreen":
+			c.time === 0 && s.clearRect(0, 0, t.width, t.height);
+			break;
+		case "Bitmap": break;
+		default: throw new e(c, "Unexpected ARIB Parsed Token in CanvasRenderingStrategy");
+	}
+}, c = (e, n, r, i, a) => {
+	let { state: o } = n;
+	e.clearRect((o.margin[0] + (o.position[0] + 0) - 0) * r[0], (o.margin[1] + (o.position[1] + 1) - t.box(o)[1]) * r[1], t.box(o)[0] * r[0], t.box(o)[1] * r[1]);
+}, l = (e, n, i, a, o) => {
+	let { state: s } = n;
+	e.fillStyle = o.color.background ?? r[s.background], e.fillRect((s.margin[0] + (s.position[0] + 0) - 0) * i[0], (s.margin[1] + (s.position[1] + 1) - t.box(s)[1]) * i[1], t.box(s)[0] * i[0], t.box(s)[1] * i[1]);
+}, u = (e, n, i, a, o) => {
+	let { state: s, option: c } = n, l = (s.margin[0] + (s.position[0] + 0) + 0) * i[0], u = (s.margin[1] + (s.position[1] + 1) - t.box(s)[1]) * i[1];
+	e.translate(l, u), e.scale(i[0], i[1]), e.fillStyle = o.color.foreground ?? r[s.foreground], s.highlight & 1 && e.fillRect(0, t.box(s)[1] - 1 * c.magnification, t.box(s)[0], 1 * c.magnification), s.highlight & 2 && e.fillRect(t.box(s)[0] - 1 * c.magnification, 0, 1 * c.magnification, t.box(s)[1]), s.highlight & 4 && e.fillRect(0, 0, t.box(s)[0], 1 * c.magnification), s.highlight & 8 && e.fillRect(0, 0, 1 * c.magnification, t.box(s)[1]), e.setTransform(1, 0, 0, 1, 0, 0);
+}, d = (e, n, i, a, o) => {
+	let { state: s, option: c } = n;
+	if (!s.underline) return;
+	let l = (s.margin[0] + (s.position[0] + 0) + 0) * i[0], u = (s.margin[1] + (s.position[1] + 1) - t.box(s)[1]) * i[1];
+	e.translate(l, u), e.scale(i[0], i[1]), e.fillStyle = o.color.foreground ?? r[s.foreground], e.fillRect(0, t.box(s)[1] - 1 * c.magnification, t.box(s)[0], 1 * c.magnification), e.setTransform(1, 0, 0, 1, 0, 0);
+}, f = (e, s, f, p, m, h) => {
+	let { state: g, option: _, character: v, non_spacing: y } = s, b = n(g.size, m), x = h.replace.half && b && i.has(v) ? i.get(v) : v;
+	y || (c(e, s, p, m, h), l(e, s, p, m, h), u(e, s, p, m, h), d(e, s, p, m, h));
+	let S = (h.color.stroke == null ? null : a.get(h.color.stroke) ?? h.color.stroke) ?? (g.ornament == null ? null : r[g.ornament]), C = h.color.foreground ?? r[g.foreground];
+	if (h.replace.glyph.has(x)) {
+		let n = Math.floor((g.margin[0] + (g.position[0] + 0) + 0 + t.offset(g)[0]) * p[0]), r = Math.floor((g.margin[1] + (g.position[1] + 1) - t.box(g)[1] + t.offset(g)[1]) * p[1]);
+		e.translate(n, r);
+		let { viewBox: i, path: a } = h.replace.glyph.get(x), o = new f(a), [s, c, l, u] = i, d = l - s, m = u - c;
+		e.scale(p[0] * g.fontsize[0] / d, p[1] * g.fontsize[1] / m), e.translate(s, c), S !== null && S !== C && (e.strokeStyle = S, e.lineJoin = "round", e.lineWidth = 4 * Math.max(d / g.fontsize[0], m / g.fontsize[1]) * _.magnification, e.stroke(o)), e.fillStyle = C, e.fill(o), e.setTransform(1, 0, 0, 1, 0, 0);
+		return;
+	}
+	let w = Math.floor((g.margin[0] + (g.position[0] + 0) + t.box(g)[0] / 2) * p[0]), T = Math.floor((g.margin[1] + (g.position[1] + 1) - t.box(g)[1] / 2) * p[1]);
+	e.translate(w, T);
+	let E = o(x) ? h.font.arib ?? h.font.normal : h.font.normal;
+	e.scale(p[0] * 1, t.scale(g)[1] * p[1]), S !== null && S !== C && (e.font = `${g.fontsize[0]}px ${E}`, e.strokeStyle = S, e.lineJoin = "round", e.textBaseline = "middle", e.textAlign = "center", e.lineWidth = 4 * _.magnification, e.strokeText(x, 0, 0, g.fontsize[0] * t.scale(g)[0])), e.font = `${g.fontsize[0]}px ${E}`, e.fillStyle = C, e.textBaseline = "middle", e.textAlign = "center", e.fillText(x, 0, 0, g.fontsize[0] * t.scale(g)[0]), e.setTransform(1, 0, 0, 1, 0, 0);
+}, p = (e, n, r, i, a, o) => {
+	let { state: s, option: c, width: l, height: u, depth: d, binary: f } = n, p = new Uint8Array(f), m = (s.margin[0] + s.position[0] + (0 + t.offset(s)[0])) * i[0], h = (s.margin[1] + s.position[1] + (1 - t.box(s)[1] + t.offset(s)[1])) * i[1];
+	e.translate(m, h), e.scale(c.magnification * i[0], c.magnification * i[1]);
+	let g = "";
+	for (let e = 0; e < u; e++) for (let t = 0; t < l; t++) {
+		let n = 0;
+		for (let r = 0; r < d; r++) {
+			let i = Math.floor(((e * l + t) * d + r) / 8), a = 7 - ((e * l + t) * d + r) % 8;
+			n *= 2, n += (p[i] & 1 << a) >> a;
+		}
+		n !== 0 && (g += (g === "" ? "" : " ") + `M ${t} ${e} h 1 v 1 H ${t} Z`);
+	}
+	let _ = new r(g);
+	o != null && (e.strokeStyle = o, e.lineJoin = "round", e.lineWidth = 2 * c.magnification, e.stroke(_)), e.fill(_), e.setTransform(1, 0, 0, 1, 0, 0);
+}, m = (e, t, n, i, o, s) => {
+	let { state: f } = t;
+	c(e, t, i, o, s), l(e, t, i, o, s), u(e, t, i, o, s), d(e, t, i, o, s);
+	let m = (s.color.stroke == null ? null : a.get(s.color.stroke) ?? s.color.stroke) ?? (f.ornament == null ? null : r[f.ornament]);
+	p(e, t, n, i, s.color.foreground ?? r[f.foreground], m);
+};
+//#endregion
+export { s as default, f as renderCharacter, m as renderDRCS };

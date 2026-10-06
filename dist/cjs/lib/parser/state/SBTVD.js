@@ -1,0 +1,1 @@
+const e=require(`../parser.js`);var t={...e.initialState,size:e.ARIBB24_CHARACTER_SIZE.Middle};exports.default=t;

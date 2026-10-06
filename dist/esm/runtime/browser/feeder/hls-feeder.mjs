@@ -1,0 +1,165 @@
+import { base64ToUint8Array as e } from "../../../util/binary.mjs";
+import { parseID3v2 as t } from "../../../util/id3.mjs";
+import n, { SEEK_BUFFER_PREROLL_SECONDS as r } from "./decoding-feeder.mjs";
+//#region src/runtime/browser/feeder/hls-feeder.ts
+var i = class i extends n {
+	static trackModeOwners = /* @__PURE__ */ new WeakMap();
+	media = null;
+	timer = null;
+	privious_time = null;
+	id3Tracks = [];
+	fedCues = /* @__PURE__ */ new WeakSet();
+	ownedTrackModes = /* @__PURE__ */ new Set();
+	cueSnapshots = /* @__PURE__ */ new Map();
+	onAddTrackHandler = this.onAddTrack.bind(this);
+	onRemoveTrackHandler = this.onRemoveTrack.bind(this);
+	onPlayHandler = this.onPlay.bind(this);
+	onPauseHandler = this.onPause.bind(this);
+	onBufferProgressHandler = this.onBufferProgress.bind(this);
+	introspectHandler = this.introspect.bind(this);
+	constructor(e) {
+		super(e);
+	}
+	attachMedia(e) {
+		this.detachMedia(), this.media = e, this.setupHandlers(), this.registerID3Track(), e.paused === !1 && this.registerRenderingLoop();
+	}
+	detachMedia() {
+		this.unregisterRenderingLoop(), this.unregisterID3Track(), this.cleanupHandlers(), this.media = null, this.privious_time = null, this.fedCues = /* @__PURE__ */ new WeakSet(), this.cueSnapshots.clear();
+	}
+	static isID3Track(e) {
+		return e.kind === "metadata" ? e.inBandMetadataTrackDispatchType === "com.apple.streaming" || e.label === "id3" ? !0 : e.label === "Timed Metadata" : !1;
+	}
+	setupHandlers() {
+		this.media != null && (this.media.textTracks.addEventListener("addtrack", this.onAddTrackHandler), this.media.textTracks.addEventListener("removetrack", this.onRemoveTrackHandler), this.media.addEventListener("play", this.onPlayHandler), this.media.addEventListener("pause", this.onPauseHandler), this.media.addEventListener("progress", this.onBufferProgressHandler), this.media.addEventListener("loadeddata", this.onBufferProgressHandler), this.media.addEventListener("canplay", this.onBufferProgressHandler));
+	}
+	cleanupHandlers() {
+		this.media != null && (this.media.textTracks.removeEventListener("addtrack", this.onAddTrackHandler), this.media.textTracks.removeEventListener("removetrack", this.onRemoveTrackHandler), this.media.removeEventListener("play", this.onPlayHandler), this.media.removeEventListener("pause", this.onPauseHandler), this.media.removeEventListener("progress", this.onBufferProgressHandler), this.media.removeEventListener("loadeddata", this.onBufferProgressHandler), this.media.removeEventListener("canplay", this.onBufferProgressHandler));
+	}
+	destroy() {
+		this.detachMedia(), super.destroy();
+	}
+	registerID3Track() {
+		if (this.media != null) for (let e of Array.from(this.media.textTracks)) i.isID3Track(e) && (this.enableID3Track(e), this.id3Tracks.push(e));
+	}
+	unregisterID3Track() {
+		for (let e of this.ownedTrackModes) this.restoreID3TrackMode(e);
+		this.id3Tracks = [], this.cueSnapshots.clear();
+	}
+	enableID3Track(e) {
+		if (e.inBandMetadataTrackDispatchType !== "com.apple.streaming" || this.ownedTrackModes.has(e)) return;
+		let t = i.trackModeOwners.get(e);
+		if (t != null) {
+			t.holders++, this.ownedTrackModes.add(e), e.mode === "disabled" && (e.mode = "hidden");
+			return;
+		}
+		e.mode === "disabled" && (e.mode = "hidden", i.trackModeOwners.set(e, {
+			holders: 1,
+			previousMode: "disabled"
+		}), this.ownedTrackModes.add(e));
+	}
+	restoreID3TrackMode(e) {
+		if (!this.ownedTrackModes.delete(e)) return;
+		let t = i.trackModeOwners.get(e);
+		t.holders--, !(t.holders > 0) && (i.trackModeOwners.delete(e), e.mode === "hidden" && (e.mode = t.previousMode));
+	}
+	onAddTrack(e) {
+		let t = e.track;
+		i.isID3Track(t) && (this.enableID3Track(t), this.id3Tracks.push(t), this.privious_time = null, this.cueSnapshots.delete(t));
+	}
+	onRemoveTrack(e) {
+		let t = e.track;
+		i.isID3Track(t) && (this.restoreID3TrackMode(t), this.id3Tracks = this.id3Tracks.filter((e) => e !== t), this.cueSnapshots.delete(t));
+	}
+	bufferedStart(e) {
+		if (this.media == null || this.media.seeking) return null;
+		let t = this.media.buffered;
+		for (let n = 0; n < t.length; n++) if (t.start(n) <= e && e <= t.end(n)) return t.start(n);
+		return null;
+	}
+	introspect() {
+		this.registerRenderingLoop(), this.scanCurrentBuffer();
+	}
+	scanCurrentBuffer() {
+		if (this.media == null) return;
+		let e = this.media.currentTime, t = this.bufferedStart(e);
+		if (t == null) return;
+		this.privious_time != null && e < this.privious_time && (super.onSeeking(), this.fedCues = /* @__PURE__ */ new WeakSet());
+		let n = this.privious_time == null || e < this.privious_time;
+		for (let i of this.id3Tracks) {
+			let a = i.cues;
+			if (a == null || a.length === 0) continue;
+			let o = this.cueSnapshots.get(i), s = o == null || o.length !== a.length || o.first !== a[0] || o.last !== a[a.length - 1];
+			this.cueSnapshots.set(i, {
+				length: a.length,
+				first: a[0],
+				last: a[a.length - 1]
+			});
+			let c = n || s, l = t - r, u = n ? l : s ? Math.min(l, this.privious_time) : this.privious_time, d = null, f = null;
+			{
+				let e = -1, t = a.length;
+				for (; e + 1 < t;) {
+					let n = Math.floor((e + t) / 2), r = a[n].startTime;
+					(c ? u <= r : u < r) ? t = n : e = n;
+				}
+				d = e;
+			}
+			{
+				let t = -1, n = a.length;
+				for (; t + 1 < n;) {
+					let r = Math.floor((t + n) / 2);
+					e < a[r].startTime ? n = r : t = r;
+				}
+				f = t;
+			}
+			if (!(d === null || f === null || d === f) && d < f) for (let e = d + 1; e <= f; e++) {
+				let t = a[e];
+				this.fedCues.has(t) || (this.feedID3v2Cue(t), this.fedCues.add(t));
+			}
+		}
+		this.privious_time = e, n && (this.prepare(e, t), this.media.paused && this.notifyPresentationChange());
+	}
+	registerRenderingLoop() {
+		this.timer = requestAnimationFrame(this.introspectHandler);
+	}
+	unregisterRenderingLoop() {
+		this.timer != null && (cancelAnimationFrame(this.timer), this.timer = null);
+	}
+	onPlay() {
+		this.timer ?? this.registerRenderingLoop();
+	}
+	onPause() {
+		this.unregisterRenderingLoop();
+	}
+	onBufferProgress() {
+		this.media?.paused && this.scanCurrentBuffer();
+	}
+	onSeeking() {
+		super.onSeeking(), this.privious_time = null, this.fedCues = /* @__PURE__ */ new WeakSet(), this.cueSnapshots.clear();
+	}
+	onSeeked() {
+		this.scanCurrentBuffer();
+	}
+	feedID3v2Cue(t) {
+		if (t.track == null) return;
+		let n = t;
+		t.track.inBandMetadataTrackDispatchType === "com.apple.streaming" || t.track.label === "id3" ? n.value.key === "PRIV" && n.value.info === "aribb24.js" ? this.feed(n.value.data, t.startTime, t.startTime) : n.value.key === "TXXX" && n.value.info === "aribb24.js" && this.feed(e(n.value.data), t.startTime, t.startTime) : t.track.label === "Timed Metadata" && (n.frame.key === "PRIV" && n.frame.owner === "aribb24.js" ? this.feed(n.frame.data, t.startTime, t.startTime) : n.frame.key === "TXXX" && n.frame.description === "aribb24.js" && this.feed(e(n.frame.data), t.startTime, t.startTime));
+	}
+	feedB24(e, t, n) {
+		e = e instanceof Uint8Array ? e : new Uint8Array(e), this.feed(e, t, n ?? t);
+	}
+	feedID3(n, r, i) {
+		n = n instanceof Uint8Array ? n : new Uint8Array(n);
+		for (let a of t(n)) switch (a.id) {
+			case "PRIV":
+				if (a.owner !== "aribb24.js") break;
+				this.feed(a.data, r, i ?? r);
+				break;
+			case "TXXX":
+				if (a.description !== "aribb24.js") break;
+				this.feed(e(a.text), r, i ?? r);
+				break;
+		}
+	}
+};
+//#endregion
+export { i as default };

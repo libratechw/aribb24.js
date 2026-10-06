@@ -1,0 +1,1 @@
+var e={from(e){return{...e}}};exports.RendererOption=e;

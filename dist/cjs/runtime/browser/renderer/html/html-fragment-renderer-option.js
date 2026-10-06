@@ -1,0 +1,1 @@
+var e={from(e){return{replace:{drcs:new Map,...e?.replace},color:{foreground:!0,background:null,stroke:!1,...e?.color}}}};exports.HTMLFragmentRendererOption=e;
