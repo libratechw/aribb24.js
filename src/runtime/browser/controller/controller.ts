@@ -3,6 +3,25 @@ import ARIBB24Renderer from "../renderer/renderer";
 import { ControllerOption } from "./controller-option";
 import EventEmitter from "./eventemitter";
 import { Event, EventType, BuiltinSound } from "./events";
+import { shouldNotAssumeUseClearScreen, startsNewCaptionPicture } from "../renderer/quirk";
+
+type Presentation = NonNullable<ReturnType<ARIBB24Feeder['content']>>;
+type PaintedCue = { source: Presentation; snapshot: Presentation; ownsSnapshot: boolean };
+
+const rememberCue = (source: Presentation): PaintedCue => {
+  // Text tokens are immutable after decoding. Copy only bitmap presentations:
+  // the feeder closes their ImageBitmaps when a same-PTS cue is replaced.
+  const ownsSnapshot = source.data.some((token) => token.tag === 'Bitmap');
+  return { source, snapshot: ownsSnapshot ? structuredClone(source) : source, ownsSnapshot };
+};
+
+const closeSnapshot = (cue: Presentation): void => {
+  for (const token of cue.data) {
+    if (token.tag !== 'Bitmap') { continue; }
+    token.normal_bitmap.close();
+    token.flashing_bitmap?.close();
+  }
+};
 
 export default class Controller {
   // Option
@@ -10,6 +29,7 @@ export default class Controller {
   // Video
   private media: HTMLVideoElement | null = null;
   private container: HTMLElement | null = null;
+  private containerSize: { width: number; height: number } | null = null;
   // Container Resize Handler
   private readonly onContainerResizeHandler = this.onContainerResize.bind(this);
   private resize_observer: ResizeObserver | null = null;
@@ -20,12 +40,21 @@ export default class Controller {
   private timer: number | null = null;
   // Seeking Handler
   private readonly onSeekingHandler = this.onSeeking.bind(this);
+  private readonly onSeekedHandler = this.onSeeked.bind(this);
+  private readonly onPresentationChangedHandler = this.onPresentationChanged.bind(this);
+  private readonly onBufferedProgressHandler = this.onBufferedProgress.bind(this);
   // Play/Pause Handler
   private readonly onPlayHandler = this.onPlay.bind(this);
   private readonly onPauseHandler = this.onPause.bind(this);
   // Renderer
   private renderers: ARIBB24Renderer[] = [];
   private privious_pts: number | null = null;
+  private lastPaintedCue: ReturnType<ARIBB24Feeder['content']> = null;
+  // Repaint copies belong to the controller: a feeder may close the bitmap of
+  // a replaced presentation before a renderer is resized.
+  private paintedCues: PaintedCue[] = [];
+  private pendingSoundCuePts: number | null = null;
+  private needsRepaint: Set<ARIBB24Renderer> = new Set();
   // Feeder
   private feeder: ARIBB24Feeder | null = null;
   // Control
@@ -45,10 +74,13 @@ export default class Controller {
     }
     this.media = media;
     this.container = container ?? media.parentElement!;
+    this.containerSize = null;
     if (this.container) {
       this.renderers.forEach((renderer) => renderer.onAttach(this.container!));
     }
-    this.feeder?.prepare(this.media.currentTime);
+    this.feeder?.prepare(this.media.currentTime, this.bufferedStart(this.media.currentTime));
+    // Reconcile captions replaced while no media element was attached.
+    this.refreshPaintedCues(this.paintedCues.map(({ source }) => source.pts));
     this.setupHandlers();
   }
 
@@ -58,6 +90,7 @@ export default class Controller {
     }
     this.cleanupHandlers()
     this.media = this.container = null
+    this.containerSize = null;
   }
 
   private setupHandlers() {
@@ -65,6 +98,9 @@ export default class Controller {
 
     // setup media handler
     this.media.addEventListener('seeking', this.onSeekingHandler);
+    this.media.addEventListener('seeked', this.onSeekedHandler);
+    this.media.addEventListener('progress', this.onBufferedProgressHandler);
+    this.media.addEventListener('canplay', this.onBufferedProgressHandler);
     this.media.addEventListener('resize', this.onVideoResizeHandler);
     this.media.addEventListener('play', this.onPlayHandler);
     this.media.addEventListener('pause', this.onPauseHandler);
@@ -77,6 +113,9 @@ export default class Controller {
   private cleanupHandlers() {
     // cleanup media seeking handler
     this.media?.removeEventListener('seeking', this.onSeekingHandler);
+    this.media?.removeEventListener('seeked', this.onSeekedHandler);
+    this.media?.removeEventListener('progress', this.onBufferedProgressHandler);
+    this.media?.removeEventListener('canplay', this.onBufferedProgressHandler);
     this.media?.removeEventListener('resize', this.onVideoResizeHandler);
     this.media?.removeEventListener('play', this.onPlayHandler);
     this.media?.removeEventListener('pause', this.onPauseHandler);
@@ -92,16 +131,19 @@ export default class Controller {
   public attachFeeder(feeder: ARIBB24Feeder) {
     this.detachFeeder();
     this.feeder = feeder;
+    this.feeder.setPresentationChangeHandler?.(this.onPresentationChangedHandler);
     this.feeder.onAttach();
 
     if (this.media != null) {
-      this.feeder.prepare(this.media.currentTime);
+      this.feeder.prepare(this.media.currentTime, this.bufferedStart(this.media.currentTime));
     }
   }
 
   public detachFeeder() {
+    this.feeder?.setPresentationChangeHandler?.(null);
     this.feeder?.onDetach();
     this.feeder = null;
+    this.clear();
   }
 
   public attachRenderer(renderer: ARIBB24Renderer) {
@@ -110,10 +152,25 @@ export default class Controller {
     if (this.container) {
       renderer.onAttach(this.container);
     }
+    if (this.media) {
+      if (this.containerSize) {
+        renderer.onContainerResize(this.containerSize.width, this.containerSize.height);
+      }
+      if (this.media.videoWidth > 0 && this.media.videoHeight > 0) {
+        renderer.onVideoResize(this.media.videoWidth, this.media.videoHeight);
+      }
+      if (this.isShowing) {
+        this.paint(true, [renderer]);
+      }
+    }
+    // A renderer replacing one invalidated while hidden must receive the
+    // current presentation when captions are shown again.
+    if (this.media && !this.isShowing) { this.needsRepaint.add(renderer); }
   }
 
   public detachRenderer(renderer: ARIBB24Renderer) {
     renderer.onDetach();
+    this.needsRepaint.delete(renderer);
     this.renderers = this.renderers.filter((elem) => elem !== renderer);
   }
 
@@ -125,9 +182,96 @@ export default class Controller {
   }
 
   private onSeeking() {
+    // Eviction can precede its progress event. Capture the current boundary
+    // while the feeder still owns the decoded page, before resetting it.
+    this.pruneBufferedHistory();
     this.feeder?.onSeeking();
     this.renderers.forEach((renderer) => renderer.onSeeking());
     this.clear();
+  }
+
+  private bufferedStart(time: number): number | null {
+    if (this.media == null) { return null; }
+    const ranges = this.media.buffered;
+    for (let index = 0; index < ranges.length; index++) {
+      if (ranges.start(index) <= time && time <= ranges.end(index)) {
+        return ranges.start(index);
+      }
+    }
+    return null;
+  }
+
+  private onSeeked() {
+    if (!this.media?.paused) { return; }
+    this.feeder?.onSeeked?.();
+    if (this.isShowing) {
+      this.paint(true);
+    } else {
+      this.renderers.forEach((renderer) => this.needsRepaint.add(renderer));
+    }
+  }
+
+  private pruneBufferedHistory() {
+    // Only the earliest retained range is an eviction boundary. The range
+    // containing a seek target can have older, still seekable ranges before it.
+    if (this.media != null && this.media.buffered.length > 0) {
+      this.feeder?.prune?.(this.media.buffered.start(0));
+    }
+  }
+
+  private onBufferedProgress() {
+    this.pruneBufferedHistory();
+    // A paused seek may become buffered only after seeked fired. MPEG-TS has
+    // no metadata-track rescan to wake the decoder at that point.
+    if (this.media?.paused) { this.onPresentationChanged(); }
+  }
+
+  private onPresentationChanged(changedPts?: readonly number[]) {
+    if (!this.media || this.media.seeking) { return; }
+    const currentTime = this.media.currentTime;
+    const current = this.feeder?.content(currentTime, this.bufferedStart(currentTime)) ?? null;
+    const previousChanges = changedPts?.filter((pts) => current == null || pts < current.pts) ?? [];
+    const inserted = previousChanges.some((pts) => !this.paintedCues.some(({ source }) => source.pts === pts));
+    const replaced = this.refreshPaintedCues(previousChanges);
+    if ((inserted || replaced) && current === this.lastPaintedCue) {
+      // A newly decoded past cue was never in the painted picture. Rebuild
+      // through contentRange instead of merely refreshing its existing cues.
+      if (inserted) { this.lastPaintedCue = null; }
+      if (this.isShowing) { this.paint(true); }
+      else { this.renderers.forEach((renderer) => this.needsRepaint.add(renderer)); }
+      return;
+    }
+    // The decoder may notify us about an older cue or repeat a feeder scan.
+    // Repainting the same presentation appends its glyphs a second time.
+    if (current != null && currentTime < current.pts + current.duration &&
+        current === this.lastPaintedCue && this.privious_pts === current.pts) { return; }
+    if (!this.media.paused) {
+      if (!this.isShowing) {
+        this.pendingSoundCuePts = null;
+        this.renderers.forEach((renderer) => this.needsRepaint.add(renderer));
+        return;
+      }
+      // A statement can finish decoding after its same-time management cue
+      // has already been painted. The regular loop skips unchanged PTS.
+      if (current != null && currentTime < current.pts + current.duration &&
+          this.privious_pts === current.pts) {
+        this.paint(true);
+        this.pendingSoundCuePts = null;
+        this.emitBuiltinSounds(current);
+      }
+      return;
+    }
+    // A newly arrived statement can extend the picture already on screen.
+    // Replacing the same presentation instead needs a fresh image.
+    const append = current != null && currentTime < current.pts + current.duration &&
+      this.privious_pts != null && current.pts > this.privious_pts;
+    if (this.isShowing || this.needsRepaint.size === 0) {
+      // Hidden renderers keep their backing image; update it before show()
+      // unless a seek or resize has already invalidated it.
+      this.paint(!append);
+    } else {
+      this.renderers.forEach((renderer) => this.needsRepaint.add(renderer));
+    }
   }
 
   private onContainerResize(entries: ResizeObserverEntry[]) {
@@ -138,23 +282,39 @@ export default class Controller {
 
     const width = target.devicePixelContentBoxSize != null ? target.devicePixelContentBoxSize[0].inlineSize : Math.floor(target.contentBoxSize[0].inlineSize * devicePixelRatio);
     const height = target.devicePixelContentBoxSize != null ? target.devicePixelContentBoxSize[0].blockSize : Math.floor(target.contentBoxSize[0].blockSize * devicePixelRatio);
+    if (width <= 0 || height <= 0) { return; }
+    this.containerSize = { width, height };
 
+    const resized: ARIBB24Renderer[] = [];
     this.renderers.forEach((renderer) => {
-      if (!renderer.onContainerResize(width, height)) { return; }
-      this.paint(true);
+      if (renderer.onContainerResize(width, height)) { resized.push(renderer); }
     });
+    if (resized.length === 0) { return; }
+    if (this.isShowing) {
+      this.paint(true, resized);
+    } else {
+      resized.forEach((renderer) => this.needsRepaint.add(renderer));
+    }
   }
 
   private onVideoResize() {
     if (!this.media || !this.container) { return; }
+    if (this.media.videoWidth <= 0 || this.media.videoHeight <= 0) { return; }
 
+    const resized: ARIBB24Renderer[] = [];
     this.renderers.forEach((renderer) => {
-      if (!renderer.onVideoResize(this.media!.videoWidth, this.media!.videoHeight)) { return; }
-      this.paint(true);
+      if (renderer.onVideoResize(this.media!.videoWidth, this.media!.videoHeight)) { resized.push(renderer); }
     });
+    if (resized.length === 0) { return; }
+    if (this.isShowing) {
+      this.paint(true, resized);
+    } else {
+      resized.forEach((renderer) => this.needsRepaint.add(renderer));
+    }
   }
 
   private onTimeupdate() {
+    this.timer = null;
     // not showing, do not show
     if (!this.isShowing) { return; }
 
@@ -174,14 +334,14 @@ export default class Controller {
 
   private onPlay(): void {
     if (this.media != null) {
-      this.feeder?.prepare(this.media.currentTime);
+      this.feeder?.prepare(this.media.currentTime, this.bufferedStart(this.media.currentTime));
     }
 
     this.renderers.forEach((renderer) => {
       renderer.onPlay();
     });
 
-    if (this.timer != null) { return }
+    if (!this.isShowing || this.timer != null) { return }
     this.registerRenderingLoop();
   }
 
@@ -193,18 +353,141 @@ export default class Controller {
     this.unregisterRenderingLoop();
   }
 
-  private paint(repaint: boolean) {
+  private releasePaintedCues(): void {
+    this.paintedCues.forEach(({ snapshot, ownsSnapshot }) => {
+      if (ownsSnapshot) { closeSnapshot(snapshot); }
+    });
+    this.paintedCues = [];
+  }
+
+  private refreshPaintedCues(changedPts: readonly number[]): boolean {
+    if (this.feeder == null || this.paintedCues.length === 0 || changedPts.length === 0) { return false; }
+    let changed = false;
+    const refreshed: PaintedCue[] = [];
+    for (const painted of this.paintedCues) {
+      if (!changedPts.includes(painted.source.pts)) {
+        refreshed.push(painted);
+        continue;
+      }
+      const source = this.feeder.content(painted.source.pts);
+      if (source === painted.source) {
+        refreshed.push(painted);
+        continue;
+      }
+      changed = true;
+      if (painted.ownsSnapshot) { closeSnapshot(painted.snapshot); }
+      if (source != null && source.pts === painted.source.pts) {
+        refreshed.push(rememberCue(source));
+      }
+    }
+    // content() is also the feeder's decode clock. Restore it after looking
+    // up older cues, including when a hidden picture needs no immediate paint.
+    if (this.media != null) {
+      this.feeder.content(this.media.currentTime, this.bufferedStart(this.media.currentTime));
+    }
+    if (changed) {
+      const lastClear = refreshed.findLastIndex(({ source }) => startsNewCaptionPicture(source));
+      if (lastClear > 0) {
+        refreshed.slice(0, lastClear).forEach(({ snapshot, ownsSnapshot }) => {
+          if (ownsSnapshot) { closeSnapshot(snapshot); }
+        });
+      }
+      this.paintedCues = refreshed.slice(Math.max(0, lastClear));
+    }
+    return changed;
+  }
+
+  private paint(repaint: boolean, renderers: ARIBB24Renderer[] = this.renderers) {
     // precondition
     if (!this.media) { return; }
+    if (this.media.seeking) { return; }
+
+    if (repaint && renderers !== this.renderers) {
+      if (this.paintedCues.length === 0) {
+        this.paint(true);
+        return;
+      }
+      // A resized or replacement renderer mirrors the picture already shown
+      // by its peers. Consuming the next cue here would append it again when
+      // the regular loop advances every renderer together.
+      renderers.forEach((renderer) => {
+        renderer.clear();
+        for (const { snapshot } of this.paintedCues) {
+          renderer.render(structuredClone(snapshot.state), structuredClone(snapshot.data), structuredClone(snapshot.info));
+        }
+      });
+      return;
+    }
 
     const currentTime = this.media.currentTime;
-    const current = this.feeder?.content(currentTime) ?? null;
+    const current = this.feeder?.content(currentTime, this.bufferedStart(currentTime)) ?? null;
     if (repaint) {
       // paint
       if (current == null || currentTime >= current.pts + current.duration) {
-        this.renderers.forEach((renderer) => renderer.clear());
+        renderers.forEach((renderer) => renderer.clear());
+        if (renderers === this.renderers) { this.releasePaintedCues(); }
       } else {
-        this.renderers.forEach((renderer) => renderer.render(current.state, structuredClone(current.data), current.info));
+        // A renderer may consume and close bitmap tokens. Each renderer must
+        // own its copy, including during a resize repaint.
+        const existingPicture = current === this.lastPaintedCue &&
+          this.privious_pts === current.pts && this.paintedCues.length > 0;
+        const replacedLastCue = !existingPicture && current !== this.lastPaintedCue &&
+          this.privious_pts === current.pts &&
+          this.paintedCues.at(-1)?.source === this.lastPaintedCue;
+        let picture = existingPicture ? this.paintedCues.map(({ snapshot }) => snapshot)
+          : replacedLastCue && !startsNewCaptionPicture(current)
+            ? [...this.paintedCues.slice(0, -1).map(({ snapshot }) => snapshot), current] : [current];
+        if (!existingPicture && !replacedLastCue) {
+          let from = this.lastPaintedCue != null && this.privious_pts != null && current.pts > this.privious_pts
+            ? this.privious_pts : null;
+          let updates = this.feeder?.contentRange?.(from, current.pts);
+          if (from != null && updates === null) {
+            // Hidden playback can outlive its old range anchor. The retained
+            // page is still authoritative even after that anchor is evicted.
+            from = null;
+            updates = this.feeder?.contentRange?.(null, current.pts);
+          }
+          if (updates != null && updates.at(-1) === current) {
+            picture = from != null ? this.paintedCues.map(({ snapshot }) => snapshot) : [];
+            // Hidden playback can skip a whole page or a timed screen clear.
+            // Replay decoded cues, not a guess that the latest cue is adjacent.
+            for (const cue of updates) {
+              const previous = picture.at(-1);
+              if (startsNewCaptionPicture(cue) || (previous != null && cue.pts >= previous.pts + previous.duration)) {
+                picture = [];
+              }
+              picture.push(cue);
+            }
+          }
+        }
+        renderers.forEach((renderer) => {
+          renderer.clear();
+          for (const cue of picture) {
+            renderer.render(structuredClone(cue.state), structuredClone(cue.data), structuredClone(cue.info));
+          }
+        });
+        if (renderers === this.renderers && !existingPicture) {
+          const remembered = picture.map((cue) =>
+            this.paintedCues.find(({ snapshot }) => snapshot === cue) ?? rememberCue(cue));
+          for (const painted of this.paintedCues) {
+            if (!remembered.includes(painted) && painted.ownsSnapshot) { closeSnapshot(painted.snapshot); }
+          }
+          this.paintedCues = remembered;
+        }
+      }
+
+      if (renderers === this.renderers) {
+        // A complete paused repaint has already drawn this cue. Do not append
+        // it again on the first play frame; defer its sound until play instead.
+        const shown = current != null && currentTime < current.pts + current.duration;
+        if (shown && this.privious_pts !== current.pts) {
+          this.pendingSoundCuePts = current.pts;
+        } else if (!shown) {
+          this.pendingSoundCuePts = null;
+        }
+        this.privious_pts = shown ? current.pts
+          : current != null ? current.pts + current.duration : null;
+        this.lastPaintedCue = shown ? current : null;
       }
 
       return;
@@ -215,20 +498,47 @@ export default class Controller {
       if (this.privious_pts == null) { return; }
       this.renderers.forEach((renderer) => renderer.clear());
       this.privious_pts = null;
+      this.lastPaintedCue = null;
+      this.releasePaintedCues();
+      this.pendingSoundCuePts = null;
     } else if (currentTime >= current.pts + current.duration) { // cue duration expired, clear
       const end = current.pts + current.duration;
       if (this.privious_pts === end) { return; }
       this.renderers.forEach((renderer) => renderer.clear());
       this.privious_pts = end; // end is finite
+      this.lastPaintedCue = null;
+      this.releasePaintedCues();
+      this.pendingSoundCuePts = null;
     } else { // render
-      if (this.privious_pts === current.pts) { return; }
+      if (this.privious_pts === current.pts) {
+        if (!this.media.paused && this.pendingSoundCuePts === current.pts) {
+          this.emitBuiltinSounds(current);
+          this.pendingSoundCuePts = null;
+        }
+        return;
+      }
+      // SBTVD replaces a picture without a ClearScreen token. Notify all
+      // renderers, including snapshot observers, through the same clear().
+      if (shouldNotAssumeUseClearScreen(current.info)) {
+        this.renderers.forEach((renderer) => renderer.clear());
+      }
       this.renderers.forEach((renderer) => renderer.render(structuredClone(current.state), structuredClone(current.data), structuredClone(current.info)));
       this.privious_pts = current.pts
-
-      // Builtin Sound Callback
-      for (const token of current.data.filter((data) => data.tag === 'BuiltinSoundReplay')) {
-        this.emitter.emit(EventType.BuiltinSound, BuiltinSound.from(token.sound));
+      this.lastPaintedCue = current;
+      if (startsNewCaptionPicture(current)) { this.releasePaintedCues(); }
+      this.paintedCues.push(rememberCue(current));
+      if (this.media.paused) {
+        this.pendingSoundCuePts = current.pts;
+      } else {
+        this.pendingSoundCuePts = null;
+        this.emitBuiltinSounds(current);
       }
+    }
+  }
+
+  private emitBuiltinSounds(current: NonNullable<ReturnType<ARIBB24Feeder['content']>>): void {
+    for (const token of current.data.filter((data) => data.tag === 'BuiltinSoundReplay')) {
+      this.emitter.emit(EventType.BuiltinSound, BuiltinSound.from(token.sound));
     }
   }
 
@@ -237,14 +547,30 @@ export default class Controller {
     this.renderers.forEach((renderer) => renderer.clear());
     // clear privious information
     this.privious_pts = null;
+    this.lastPaintedCue = null;
+    this.releasePaintedCues();
+    this.pendingSoundCuePts = null;
   }
 
   public show(): void {
     this.isShowing = true;
+    this.renderers.forEach((renderer) => renderer.show());
+    // Playback can cross cue boundaries while the rendering loop is hidden,
+    // even when the feeder did not send a presentation-change notification.
+    const time = this.media?.currentTime;
+    const current = time != null && !this.media?.seeking
+      ? this.feeder?.content(time, this.bufferedStart(time)) ?? null : null;
+    const marker = current == null || time == null ? null
+      : time < current.pts + current.duration ? current.pts : current.pts + current.duration;
+    if (marker !== this.privious_pts || (this.needsRepaint.size > 0 && this.needsRepaint.size === this.renderers.length)) {
+      this.paint(true);
+    } else if (this.needsRepaint.size > 0) {
+      this.paint(true, [...this.needsRepaint]);
+    }
+    this.needsRepaint.clear();
     if (this.timer == null) {
       this.registerRenderingLoop();
     }
-    this.renderers.forEach((renderer) => renderer.show());
   }
 
   public hide(): void {
