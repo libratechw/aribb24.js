@@ -94,11 +94,16 @@ export type FeederPresentationData = {
 };
 
 export default interface Feeder {
-  prepare(time: number): void;
-  content(time: number): FeederPresentationData | null;
+  /** Buffered range start for a seek target; null waits for media, omission replays only near time. */
+  prepare(time: number, bufferedStart?: number | null): void;
+  content(time: number, bufferedStart?: number | null): FeederPresentationData | null;
   clear(): void;
   destroy(): void;
   onAttach(): void;
   onDetach(): void;
   onSeeking(): void;
+  /** Refresh buffered metadata before a paused seek is repainted. */
+  onSeeked?(): void;
+  /** Notify the controller when asynchronous decoding changes the visible cue. */
+  setPresentationChangeHandler?(handler: ((changedPts?: readonly number[]) => void) | null): void;
 }
